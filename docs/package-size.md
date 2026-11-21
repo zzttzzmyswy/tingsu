@@ -40,7 +40,7 @@ Linux AppImage 下载为 **463.9 MiB**，Windows EXE 为 **449.6 MiB**。两端�
 | 启动器及归档开销 | 1.0 | — | 0.5 | — |
 | **合计** | **463.9** | **1,268.2** | **449.6** | **1,211.0** |
 
-Codex 行包括 CLI、辅助程序及资源。Qt 行包括 PySide、Shiboken、QtWebEngine 内置 Chromium、平台插件和资源。仅 WebEngine Core 一个动态库，压缩后就有 Linux **73.5 MiB**、Windows **64.7 MiB**。Linux 的 FFmpeg 行只算两个命令及直接的 libav、libsw、libpostproc 库；编解码器的外部依赖列入其他原生库。Windows 的两份 FFmpeg 工具各自静态链接编解码功能。[Linux 组装清单](../packaging/linux/assemble.py) · [Windows 打包清单](../packaging/windows/Tingsu.spec) · [Windows FFmpeg 构建参数](../packaging/sources/windows-ffmpeg-9.1-build.txt)
+Codex 行包括 CLI、辅助程序及资源。Qt 行包括 PySide、Shiboken、QtWebEngine 内置 Chromium、平台插件和资源。仅 WebEngine Core 一个动态库，压缩后就有 Linux **73.5 MiB**、Windows **64.7 MiB**。Linux 的 FFmpeg 行只算两个命令及直接的 libav、libsw、libpostproc 库；编解码器的外部依赖列入其他原生库。Windows 的两份 FFmpeg 工具各自静态链接编解码功能。[Linux 组装清单](../packaging/linux/assemble.py) · [Windows 打包清单](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/packaging/windows/Tingsu.spec) · [Windows FFmpeg 构建参数](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/packaging/sources/windows-ffmpeg-9.1-build.txt)
 
 ## 在 v1.2.0 基线上验证的缩减方案
 

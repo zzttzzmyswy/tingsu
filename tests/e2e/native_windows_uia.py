@@ -23,7 +23,7 @@ Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
 
 function Find-HostWindow {
-    # A PyInstaller one-file launcher starts a Python process which starts the UI host.
+    # Match the WebView2 window to the single-file application process.
     $candidates = @(Get-Process -Name 'tingsu-webview' -ErrorAction SilentlyContinue |
         Where-Object { $_.MainWindowHandle -ne 0 })
     if ($candidates.Count -eq 0) { return }

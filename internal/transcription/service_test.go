@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,7 +130,7 @@ func TestClosePreservesInflightAndQueuedTailForRetry(t *testing.T) {
 func TestRecordStopsAndDrainsTailAfterEmptyFirstResult(t *testing.T) {
 	s, mid := testStore(t)
 	dir := t.TempDir()
-	pcm := bytes.Repeat([]byte{4, 1}, media.Rate*9)
+	pcm := bytes.Repeat([]byte{4, 1}, media.Rate*15)
 	p := writePCM(t, dir, pcm)
 	first := make(chan struct{}, 1)
 	done := make(chan struct{}, 1)
@@ -163,7 +164,7 @@ func TestRecordStopsAndDrainsTailAfterEmptyFirstResult(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		pos, _ := a.Position()
-		if pos > 3.5 {
+		if pos > 6.5 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -174,15 +175,15 @@ func TestRecordStopsAndDrainsTailAfterEmptyFirstResult(t *testing.T) {
 	a.Stop()
 	await(t, done)
 	rs := s.Events(mid, 0, 0)
-	if a.Status() != "idle" || s.PendingCount(mid) != 0 || len(rs) != 1 || rs[0]["at"] != float64(3) {
+	if a.Status() != "idle" || s.PendingCount(mid) != 0 || len(rs) != 1 || rs[0]["at"] != float64(6) {
 		t.Fatalf("tail %v", rs)
 	}
 	sizesMu.Lock()
 	defer sizesMu.Unlock()
-	if len(sizes) != 2 || sizes[0] != 3*bytesPerSecond || sizes[1] < bytesPerSecond/2 || sizes[1] >= 6*bytesPerSecond {
+	if len(sizes) != 2 || sizes[0] != 6*bytesPerSecond || sizes[1] < bytesPerSecond/2 || sizes[1] >= 6*bytesPerSecond {
 		t.Fatalf("chunk sizes %v", sizes)
 	}
-	if rs[0]["end"] != float64(sizes[0]+sizes[1])/bytesPerSecond {
+	if math.Abs(rs[0]["end"].(float64)-float64(sizes[0]+sizes[1])/bytesPerSecond) > 1e-9 {
 		t.Fatal("sample time lost across stop")
 	}
 }
@@ -270,4 +271,124 @@ func TestLiveProvider(t *testing.T) {
 		t.Fatal("no timestamped speech")
 	}
 	t.Logf("%s returned %d segments, first timestamp %.2f, last timestamp %.2f; diarization=%v", provider, len(r), r[0].Start, r[len(r)-1].End, r[0].Speaker != "")
+}
+
+func TestCloseDuringCapturePersistsPartialWAVAcrossProcessRestart(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "db.sqlite3")
+	db, e := store.Open(dbPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	mid, e := db.Create("capture recovery", "", "", 0, "", "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	pcm := bytes.Repeat([]byte{12, 5}, media.Rate*7)
+	input := writePCM(t, dir, pcm)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upload(t, r)
+		io.WriteString(w, `{"text":"恢复尾段"}`)
+	}))
+	defer server.Close()
+	t.Setenv("TINGSU_SILICONFLOW_URL", server.URL)
+	cfg := Config{Provider: "siliconflow", APIKey: "fixture", Model: "fixture"}
+	a := New(db, filepath.Join(dir, "audio"), Callbacks{})
+	if e = a.Record(mid, media.Source{ID: input, Kind: "file"}, cfg, 12, 0); e != nil {
+		t.Fatal(e)
+	}
+	deadline := time.Now().Add(4 * time.Second)
+	for {
+		pos, _ := a.Position()
+		if pos >= .7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			a.Close()
+			t.Fatal("capture did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	a.Close()
+	if e = db.Close(); e != nil {
+		t.Fatal(e)
+	}
+	db, e = store.Open(dbPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	jobs, e := db.PendingJobs(mid)
+	if e != nil || len(jobs) != 1 {
+		t.Fatalf("expected unsubmitted tail on restart: %v %v", jobs, e)
+	}
+	j := jobs[0]
+	got, e := media.ReadWAV(j.Path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(got) < int(.7*bytesPerSecond) || len(got) >= len(pcm) || !bytes.Equal(got, pcm[:len(got)]) || j.Start != 0 || j.End != seconds(got) {
+		t.Fatal("capture tail was not preserved exactly")
+	}
+	done := make(chan struct{}, 1)
+	b := New(db, dir, Callbacks{Completed: func(string) { done <- struct{}{} }})
+	defer b.Close()
+	if e = b.Retry(mid, cfg); e != nil {
+		t.Fatal(e)
+	}
+	await(t, done)
+	if db.PendingCount(mid) != 0 || len(db.Events(mid, 0, 0)) != 1 {
+		t.Fatal("restored partial WAV was not committed")
+	}
+}
+
+func TestSophnetMultipartAndPolledMillisecondTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	p := writePCM(t, dir, bytes.Repeat([]byte{8, 2}, media.Rate*3))
+	const model = "abcdefghijklmnopqrstuv"
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fixture" {
+			t.Error("missing provider authorization")
+		}
+		switch r.Method {
+		case "POST":
+			if e := r.ParseMultipartForm(1 << 20); e != nil {
+				t.Error(e)
+				return
+			}
+			f, h, e := r.FormFile("audio_file")
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			f.Close()
+			if h.Header.Get("Content-Type") != "audio/wav" {
+				t.Error("audio MIME")
+			}
+			var params map[string]any
+			if e = json.Unmarshal([]byte(r.FormValue("data")), &params); e != nil || params["easyllm_id"] != model {
+				t.Error("deployment missing", e)
+			}
+			io.WriteString(w, `{"taskId":"task-1"}`)
+		case "GET":
+			if r.URL.Path != "/task-1" {
+				t.Error("invalid task path")
+			}
+			if gets.Add(1) == 1 {
+				io.WriteString(w, `{"status":"PROCESSING"}`)
+			} else {
+				io.WriteString(w, `{"status":"SUCCEEDED","results":[{"transcripts":[{"text":"早安","sentences":[{"begin_time":200,"end_time":2100,"text":"早安","speaker_id":"spk0"}]}]}]}`)
+			}
+		default:
+			t.Error("unexpected method")
+		}
+	}))
+	defer srv.Close()
+	a := defaultClient()
+	a.sophnet = srv.URL
+	ts, e := a.recognize(context.Background(), p, Config{Provider: "sophnet", Model: model, APIKey: "fixture"}, 8, &speakerTracker{next: 4})
+	if e != nil || len(ts) != 1 || ts[0].Text != "早安" || ts[0].Speaker != "发言人 04" || ts[0].Start != 8.2 || ts[0].End != 10.1 {
+		t.Fatal(ts, e)
+	}
 }

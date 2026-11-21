@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zzttzzmyswy/tingsu/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -212,4 +214,145 @@ func TestInstalledAgent(t *testing.T) {
 		t.Fatal(id, e)
 	}
 	t.Logf("%s: workspace file -> %d mutations -> streamed reply -> resume OK", provider, notes)
+}
+
+func TestRepairInterruptedOpenAITool(t *testing.T) {
+	var calls int
+	var replies []M
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/items") {
+			fmt.Fprint(w, encode(M{"data": []M{{"type": "function_call", "call_id": "persistent"}, {"type": "message", "role": "user"}}}))
+			return
+		}
+		if r.URL.Path != "/v1/responses" {
+			fmt.Fprint(w, encode(M{"id": "conv_repair", "metadata": M{"title": "会议"}}))
+			return
+		}
+		var req M
+		json.NewDecoder(r.Body).Decode(&req)
+		replies = rows(req["input"])
+		calls++
+		if calls == 1 {
+			fmt.Fprint(w, "data: "+encode(M{"type": "response.completed", "response": M{"output": []M{{"type": "function_call", "name": "create_note", "arguments": encode(M{"kind": "idea", "title": "保留", "body": ""}), "call_id": "persistent"}}}})+"\n\n")
+			return
+		}
+		if calls == 2 {
+			return
+		}
+		fmt.Fprint(w, "data: "+encode(M{"type": "response.output_text.delta", "delta": "完成"})+"\n\ndata: "+encode(M{"type": "response.completed", "response": M{"output": []M{}}})+"\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("OPENAI_BASE_URL", server.URL+"/v1")
+	db, e := store.Open(filepath.Join(t.TempDir(), "meetings.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	cfg := Config{Provider: "openai", DataDir: t.TempDir(), Key: "fixture", History: db}
+	ctx := context.Background()
+	connect := func(id string) *Client {
+		c, e := New(cfg)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Cleanup(c.Close)
+		if e = c.Connect(ctx); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = c.Open(ctx, id, "会议"); e != nil {
+			t.Fatal(e)
+		}
+		return c
+	}
+	mutations := 0
+	tool := func(name string, args M) (any, error) { mutations++; return M{"id": "stable-note-id"}, nil }
+	c := connect("")
+	if _, e = c.Send(ctx, "m", "创建便签", nil, "", nil, nil, tool); e == nil {
+		t.Fatal("expected interrupted response")
+	}
+	c.Close()
+	c = connect("conv_repair")
+	sessions, e := c.Sessions(ctx)
+	if e != nil || len(sessions) != 1 {
+		t.Fatal(sessions, e)
+	}
+	reply, e := c.Send(ctx, "m", "继续", nil, "", nil, nil, tool)
+	if e != nil || reply != "完成" || mutations != 1 || len(replies) != 2 || replies[0]["type"] != "function_call_output" || !strings.Contains(str(replies[0]["output"]), "stable-note-id") {
+		t.Fatal(reply, e, mutations, replies)
+	}
+}
+func TestTopicWorkspaceCopiesAssociatedOriginal(t *testing.T) {
+	data := t.TempDir()
+	mid := "standalone"
+	orig := library{filepath.Join(data, "workspaces", digest("meeting:" + mid)[:24]), mid}
+	file := filepath.Join(t.TempDir(), "议程.txt")
+	if e := os.WriteFile(file, []byte("原件"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	m, e := orig.stage(context.Background(), file)
+	if e != nil {
+		t.Fatal(e)
+	}
+	os.Remove(file)
+	cfg := Config{Provider: "codex", DataDir: data, Workspace: filepath.Join(data, "workspaces", "topic")}
+	c, e := New(cfg)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer c.Close()
+	for range 2 {
+		if e = c.Prepare(context.Background(), []string{mid, "new"}); e != nil {
+			t.Fatal(e)
+		}
+	}
+	got, e := (library{c.Workspace(), mid}).get(str(m.info["id"]))
+	if e != nil {
+		t.Fatal(e)
+	}
+	b, _ := os.ReadFile(got.path)
+	if string(b) != "原件" {
+		t.Fatal(got)
+	}
+}
+func TestOfficeInspectPagination(t *testing.T) {
+	root := t.TempDir()
+	f, e := os.Create(filepath.Join(root, "会议.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	w := zip.NewWriter(f)
+	for p, s := range map[string]string{
+		"xl/workbook.xml":            `<workbook xmlns:r="urn:rels"><sheets><sheet name="预算" r:id="a"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<Relationships><Relationship Id="a" Target="worksheets/sheet3.xml"/><Relationship Id="b" Target="sharedStrings.xml" Type="urn:test/sharedStrings"/></Relationships>`,
+		"xl/worksheets/sheet3.xml":   `<sheet><row><c r="C2" t="s"><v>1</v></c><c r="D2"><f>1+1</f><v>2</v></c></row></sheet>`,
+		"xl/sharedStrings.xml":       `<strings><si><t>标题</t></si><si><t>开销</t></si></strings>`} {
+		o, e := w.Create(p)
+		if e != nil {
+			t.Fatal(e)
+		}
+		fmt.Fprint(o, s)
+	}
+	if e = w.Close(); e != nil {
+		t.Fatal(e)
+	}
+	if e = f.Close(); e != nil {
+		t.Fatal(e)
+	}
+	a := M{"path": "会议.xlsx", "section": "预算", "offset": 0, "limit": 1}
+	read, e := inspectOffice(root, a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	page := obj(read)
+	if page["next_offset"] != 1 || page["items"].([]M)[0]["value"] != "开销" {
+		t.Fatal(page)
+	}
+	a["offset"] = 1
+	read, e = inspectOffice(root, a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if obj(read)["items"].([]M)[0]["formula"] != "1+1" {
+		t.Fatal(read)
+	}
 }

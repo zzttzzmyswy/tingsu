@@ -42,3 +42,4 @@ CREATE TABLE IF NOT EXISTS media (path TEXT PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS meetings_topic ON meetings(topic_id);
 CREATE TABLE IF NOT EXISTS openai_sessions(account TEXT,id TEXT,title TEXT,PRIMARY KEY(account,id));
 CREATE TABLE IF NOT EXISTS openai_pending(account TEXT,id TEXT,outputs TEXT,PRIMARY KEY(account,id));
+CREATE INDEX IF NOT EXISTS jobs_meeting_time ON jobs(meeting,start,path);

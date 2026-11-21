@@ -30,7 +30,14 @@ func Supported(path string) bool {
 func jpegFrame(ctx context.Context, path string, at float64, width int) ([]byte, error) {
 	child, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return command(child, "ffmpeg", "-nostdin", "-loglevel", "error", "-ss", strconv.FormatFloat(at, 'f', -1, 64), "-i", path, "-map", "0:v:0", "-frames:v", "1", "-filter_threads", "1", "-threads", "1", "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", width, width), "-c:v", "mjpeg", "-q:v", "4", "-f", "image2pipe", "pipe:1").Output()
+	args := []string{"-nostdin", "-loglevel", "error"}
+	// A standalone JPEG has no seekable timeline. Even a zero seek can discard
+	// its sole frame without FFmpeg returning an error.
+	if at > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(at, 'f', -1, 64))
+	}
+	args = append(args, "-i", path, "-map", "0:v:0", "-frames:v", "1", "-filter_threads", "1", "-threads", "1", "-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", width, width), "-c:v", "mjpeg", "-q:v", "4", "-f", "image2pipe", "pipe:1")
+	return command(child, "ffmpeg", args...).Output()
 }
 func Thumbnail(ctx context.Context, path string, width int) string {
 	b, e := jpegFrame(ctx, path, 0, width)

@@ -412,7 +412,9 @@ def main():
             # FUSE mount after its bus exits. Release it before deleting the fixture.
             documents = folder / "xdg_runtime_dir" / "doc"
             if f" {documents} " in Path("/proc/self/mountinfo").read_text():
-                subprocess.run(["fusermount3", "-uz", str(documents)], check=True)
+                result = subprocess.run(["fusermount3", "-uz", str(documents)], capture_output=True)
+                if result.returncode and f" {documents} " in Path("/proc/self/mountinfo").read_text():
+                    subprocess.run(["umount", "-l", str(documents)], check=True)
     return 0
 
 

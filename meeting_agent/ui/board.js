@@ -3,6 +3,8 @@
 const noteStatuses = {open: "待跟进", in_progress: "进行中", done: "已完成"};
 let boardScope = "meeting", editingNote = null, noteForComposer = "", pendingShare = false;
 
+let editorSerial = 0;
+
 function resetBoard() {
   boardScope = S.meeting.topic_id ? "topic" : "meeting";
   editingNote = null;
@@ -76,7 +78,7 @@ function renderNotes() {
 
 function noteDialog(n) {
   const shared = boardScope === "topic";
-  editingNote = {scope: boardScope, meeting: S.meeting.id, ...n};
+  editingNote = {scope: boardScope, meeting: S.meeting.id, ...n, editor: String(++editorSerial)};
   noteForComposer = "";
   pendingShare = false;
   const name = shared ? "主题便签" : "便签";
@@ -116,7 +118,7 @@ function saveBoardNote(follow) {
   if (!title) return $("#note-title").focus();
   const body = $("#note-body").value;
   noteForComposer = follow ? "请跟进这张便签：「" + title + "」\n" + body : "";
-  const data = {op: editingNote.id ? "edit" : "add", id: editingNote.id, kind: $("#note-kind").value, title, body};
+  const data = {editor: editingNote.editor, meeting: editingNote.meeting, op: editingNote.id ? "edit" : "add", id: editingNote.id, kind: $("#note-kind").value, title, body};
   if (editingNote.scope === "topic") {
     cmd("topic_note", {...data, meeting: editingNote.meeting, version: editingNote.version, status: $("#note-status").value});
   } else cmd("note", data);
@@ -128,7 +130,7 @@ function shareBoardNote() {
     return toast("请先保存修改，再将这张便签加入主题看板。", "error");
   }
   pendingShare = true;
-  cmd("topic_note", {op:"share", meeting:editingNote.meeting, id:editingNote.id});
+  cmd("topic_note", {op:"share", editor:editingNote.editor, meeting:editingNote.meeting, id:editingNote.id});
 }
 
 function changeTopicStatus(id) {
@@ -146,13 +148,14 @@ function confirmBoardDelete() {
 }
 
 function removeBoardNote() {
-  const data = {op:"delete", id:editingNote.id};
+  const data = {editor:editingNote.editor, meeting:editingNote.meeting, op:"delete", id:editingNote.id};
   if (editingNote.scope === "topic")
     cmd("topic_note", {...data, meeting:editingNote.meeting, version:editingNote.version});
   else cmd("note", data);
 }
 
-function finishBoardNote() {
+function finishBoardNote(editor) {
+  if (!editingNote || editor !== editingNote.editor) return;
   if (modal !== "note" && modal !== "confirm-delete") return;
   close();
   if (pendingShare) {

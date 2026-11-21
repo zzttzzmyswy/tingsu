@@ -6,7 +6,7 @@
 
 ## 开始使用
 
-从下表下载与你的平台匹配的单个文件，放到任意目录启动。两个版本均包含 Python 会议服务、FFmpeg、ffprobe 和 PDF 文字提取工具。C++ 桌面窗口使用系统网页引擎，Linux 使用 GTK 3 和 WebKitGTK，Windows 使用 WebView2 Evergreen。Codex、Claude Code 和 DeepSeek Harness 使用系统中已安装的 CLI。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
+从下表下载与你的平台匹配的单个文件，放到任意目录启动。两个版本均包含 Go 会议后端、FFmpeg 和 ffprobe。C++ 桌面窗口使用系统网页引擎，Linux 使用 GTK 3 和 WebKitGTK，Windows 使用 WebView2 Evergreen。Codex、Claude Code 和 DeepSeek Harness 使用系统中已安装的 CLI。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
 
 | 平台 | 双击启动的文件 |
 | --- | --- |
@@ -90,12 +90,12 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 在 **连接 AI** 或 **偏好设置 → AI 助手** 中可按 CLI 指定模型、思考等级和速率。留空沿用本机配置。Codex 的 **读取本机模型** 会读取已安装版本返回的模型与档位。Claude Code 接受本机模型名称或别名，快速模式受模型和账号资格限制。DeepSeek Harness 从会话读取当前路由提供的选项，速率由路由能力决定。[Claude Code 快速模式](https://code.claude.com/docs/en/fast-mode)
 
 - **会议上下文** 包含近期转写与便签。Agent 可以按关键词、分页读取本场会议的完整转写，并创建、编辑或删除便签。开启自动分析后，有新增发言时会合并触发分析，用户消息优先于待触发的自动分析。
-- **本地 Agent 的会议材料**。点击发送后，听序把完整原文件复制到当前 Agent 工作目录的 `attachments/` 下，并在消息中给出相对路径。Agent 可自行打开 PDF、搜索长文、读取表格或选择适合该格式的本机工具。同一主题的各场会议与不同本机助手共用这一工作目录，独立会议分别存放。同名文件的新旧版本保留各自的路径。连接面板的 **打开工作目录** 可查看真实文件。升级前已经发送的附件会在连接时从旧资料库补入。
+- **本地 Agent 的会议材料**。点击发送后，听序把完整原文件复制到当前 Agent 工作目录的 `attachments/` 下，并在消息中给出相对路径。Agent 可自行打开 PDF、搜索长文、读取表格或选择适合该格式的本机工具。同一主题的各场会议与不同本机助手共用这一工作目录，独立会议分别存放。同名文件的新旧版本保留各自的路径。连接面板的 **打开工作目录** 可查看真实文件。第 2 版以新建会议为验收范围，升级前请保留已有数据备份。
 - **OpenAI API 的会议材料**。远端 API 使用原生文档或图像输入；超出单次输入预算的材料仍可通过会议工具分页读取。主动共享的会议画面继续随消息发送给具备视觉能力的模型。
 
 ## 从源码运行和打包
 
-源码开发使用 Python 3.10+。安装 [requirements.txt](requirements.txt) 并提供 FFmpeg、ffprobe。在 Linux 安装 C++、pkg-config 和 GTK 3、WebKitGTK、JSON-GLib 开发包，运行 `mkdir -p build && desktop/linux/build.sh build/tingsu-webview`，再执行 `./tingsu`。Windows 按打包说明构建 Win32 窗口后，可设置 `TINGSU_DESKTOP_HOST` 指向该 EXE 并运行 `py -m meeting_agent`。源码模式下 Linux 单应用音频依赖 PipeWire 或 PulseAudio 的客户端命令，Wayland 共享画面依赖 PyGObject、GStreamer 和桌面对应的 XDG ScreenCast Portal。Windows 采集组件的源码和构建脚本位于 [windows/native](windows/native/)。
+后端使用 Go，最低工具链版本见 [go.mod](go.mod)。Linux 开发机需要 C/C++、pkg-config、GTK 3、WebKitGTK、JSON-GLib、GIO Unix 和 GStreamer app/video 开发包，以及 FFmpeg、ffprobe。运行 `./tingsu` 会构建本机窗口、Wayland Portal 助手和 Go 后端并启动工作台。Windows 使用 `go build ./cmd/tingsu` 编译后端，原生助手及 FFmpeg 的目录加入 PATH，`TINGSU_DESKTOP_HOST` 指向原生窗口，`TINGSU_BUNDLE` 指向包含 ui 的目录。桌面发行包已经配置好这些路径。
 
 Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。各发行版体积、新旧图形栈的差异与媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
 
@@ -116,7 +116,7 @@ Linux 遵循 XDG 目录设置。Windows 使用当前用户的 `%LOCALAPPDATA%\Ti
 ## 验证
 
 ```sh
-python3 -m unittest discover -s tests
+go test ./...
 ```
 
 桌面运行时、平台采集、Agent 协议、数据存储的复用情况和优先拆分建议见[跨平台架构评估](docs/architecture.md)。

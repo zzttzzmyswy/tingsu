@@ -4,8 +4,8 @@ set -eu
 cache=$1
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-tar -xf "$cache/ffmpeg-9.1.tar.xz" -C "$work"
-tar -xf "$cache/dav1d-1.5.1.tar.xz" -C "$work"
+python3 -m tarfile -e "$cache/ffmpeg-9.1.tar.xz" "$work"
+python3 -m tarfile -e "$cache/dav1d-1.5.1.tar.xz" "$work"
 cd "$work/dav1d-1.5.1"
 meson setup build --prefix=/opt/tingsu-media --libdir=lib --buildtype=release --default-library=shared -Denable_tools=false -Denable_tests=false
 ninja -C build -j"${JOBS:-8}" install

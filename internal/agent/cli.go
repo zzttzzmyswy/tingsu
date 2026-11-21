@@ -172,6 +172,12 @@ func Command(ctx context.Context, c Config, args ...string) (*exec.Cmd, error) {
 	}
 	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// Login can be started before the first Client is constructed.
+	if c.Workspace != "" {
+		if e := os.MkdirAll(c.Workspace, 0700); e != nil {
+			return nil, e
+		}
+	}
 	cmd.Dir = c.Workspace
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)

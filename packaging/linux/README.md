@@ -1,25 +1,13 @@
-# Linux 单文件发行版
+# Linux 单文件 AppImage
 
-`dist/Tingsu-Linux-x86_64.AppImage` 面向 glibc 2.35 及以上的 x86_64 Linux 桌面。运行前给文件执行权限，双击即可启动。图形会话需要 Wayland 或 X11，Wayland 窗口选择使用桌面自己的 ScreenCast Portal。随包提供 Python、FFmpeg、X11 窗口选择器、PipeWire、PulseAudio 和 ALSA 客户端。首次使用在线服务需要配置相应身份。Codex、Claude Code 和 DeepSeek Harness 使用桌面用户安装的 CLI。AppRun 记录原来的加载路径，启动这些 CLI 时使用宿主工具链。
+下载 `Tingsu-Linux-x86_64.AppImage`，执行 `chmod +x Tingsu-Linux-x86_64.AppImage` 后即可启动。默认优先 Wayland，也支持 `--x11` 和 `--wayland`。Linux 桌面应提供 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或 4.0，Wayland 共享需运行 ScreenCast 桌面门户和 PipeWire。
 
-界面使用系统 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或 4.0 运行库。Debian / Ubuntu 对应 WebKitGTK 包是 `libwebkit2gtk-4.1-0`（旧版可用 `libwebkit2gtk-4.0-37`），Fedora 为 `webkit2gtk4.1`，Arch 为 `webkit2gtk-4.1`。应用自带 C++ 图形宿主，运行时无需编译器、SDK 或 Python 开发环境。
-
-配置与会议存入用户的 XDG 目录。可把 `videos` 目录放在 AppImage 旁边，或从界面导入录屏。未开放 FUSE 的环境可以运行同一个文件并传入 `--appimage-extract-and-run`。
-
-在有 Docker 的 x86_64 Linux 主机运行以下命令重新构建。宿主需要 curl、sha256sum、dpkg-deb、zstd、tar、mksquashfs 和 rsvg-convert。
+构建主机需要 Go（版本见 go.mod）、Docker、dpkg-deb、SquashFS 工具、Python 3、curl、librsvg 和 sha256sum。
 
 ```sh
-./packaging/linux/build.sh
+packaging/linux/build.sh
 ```
 
-构建在 Ubuntu 22.04 容器里进行。脚本从上游发布页获取 AppImage 启动器和 PipeWire 1.4.2 录音客户端，校验 SHA-256 后组装只读镜像。包内 `usr/share/doc/tingsu/third-party` 存放发行版包清单、依赖许可证与上游声明。源录屏、用户配置、凭据、测试数据和宿主用户目录不参与镜像组装。
+脚本在 Ubuntu 22.04 容器内编译 C++ WebView 壳、C ScreenCast 客户端和共享 FFmpeg 9.1，并归集音频工具、GStreamer/PipeWire 插件以及所需的本地动态库。Go 主程序以 CGO 关闭的模式编译。包内的媒体辅助程序使用随附的动态库；WebView 壳和外部 Agent 使用宿主机库和工具路径。应用的运行环境只包含原生程序和网页界面资源。
 
-从源码运行时，安装 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或 4.0 的开发包，然后在仓库根目录编译窗口宿主并启动。
-
-```sh
-mkdir -p build
-./desktop/linux/build.sh build/tingsu-webview
-./tingsu
-```
-
-可在已有的 Wayland 或 X11 测试桌面运行 `python3 desktop/linux/test_stdio.py build/tingsu-webview`，验证界面的本地资源加载、消息传输和文件对话框关闭。
+默认输出为 `dist/Tingsu-Linux-x86_64.AppImage`。可用 `TINGSU_BUILD_CACHE` 和 `TINGSU_DIST_DIR` 指定依赖缓存和输出目录。检查内容用 `./Tingsu-Linux-x86_64.AppImage --appimage-extract`。许可和包版本在解包后的 `usr/share/doc/tingsu/` 下。

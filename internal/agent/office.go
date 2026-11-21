@@ -277,26 +277,46 @@ func officeText(p string, w io.Writer) error {
 		return e
 	}
 	defer d.Close()
-	for _, s := range d.sections {
-		_, _ = fmt.Fprintln(w, s)
-		for offset := 0; ; {
-			r, e := inspectOffice(filepath.Dir(p), M{"path": filepath.Base(p), "section": s, "offset": offset, "limit": 200})
-			if e != nil {
+	stringsByIndex := []string{}
+	if d.sheet && d.shared != "" {
+		e = d.scan(d.shared, func(rd *xml.Decoder, el xml.StartElement) error {
+			if el.Name.Local != "si" {
+				return nil
+			}
+			value, e := texts(rd, el)
+			if e == nil {
+				stringsByIndex = append(stringsByIndex, value)
+			}
+			return e
+		})
+		if e != nil {
+			return e
+		}
+	}
+	for _, section := range d.sections {
+		if d.sheet {
+			if _, e := fmt.Fprintln(w, section); e != nil {
 				return e
 			}
-			m := obj(r)
-			for _, v := range m["items"].([]M) {
-				if text, ok := v["text"]; ok {
-					fmt.Fprintln(w, text)
-				} else {
-					fmt.Fprintln(w, v["cell"], v["value"])
+		}
+		e = d.each(section, func(row M) error {
+			if !d.sheet {
+				_, e := fmt.Fprintln(w, str(row["text"]))
+				return e
+			}
+			value := str(row["value"])
+			if _, ok := row["shared"]; ok {
+				idx, e := strconv.Atoi(value)
+				if e != nil || idx < 0 || idx >= len(stringsByIndex) {
+					return errors.New("Excel 文件的共享字符串索引无效")
 				}
+				value = stringsByIndex[idx]
 			}
-			n, ok := m["next_offset"].(int)
-			if !ok {
-				break
-			}
-			offset = n
+			_, e := fmt.Fprintln(w, row["cell"], value)
+			return e
+		})
+		if e != nil {
+			return e
 		}
 	}
 	return nil

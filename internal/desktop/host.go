@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -24,7 +25,9 @@ type packet struct {
 type host struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	in      chan func()
+	in      chan struct{}
+	inboxMu sync.Mutex
+	inbox   []func()
 	dirty   chan struct{}
 	out     *json.Encoder
 	dialogs map[int]func(any)
@@ -32,10 +35,26 @@ type host struct {
 	closing bool
 }
 
+// Posting never waits for the UI, including while a worker holds its cancellation lock.
 func (h *host) post(f func()) {
+	if h.ctx.Err() != nil {
+		return
+	}
+	h.inboxMu.Lock()
+	h.inbox = append(h.inbox, f)
+	h.inboxMu.Unlock()
 	select {
-	case h.in <- f:
-	case <-h.ctx.Done():
+	case h.in <- struct{}{}:
+	default:
+	}
+}
+func (h *host) drain() {
+	h.inboxMu.Lock()
+	batch := h.inbox
+	h.inbox = nil
+	h.inboxMu.Unlock()
+	for _, f := range batch {
+		f()
 	}
 }
 func (h *host) changed() {
@@ -113,7 +132,6 @@ func Run(args []string) error {
 		return e
 	}
 	c := exec.Command(name, ui)
-	background(c)
 	c.Stderr = os.Stderr
 	read, e := c.StdoutPipe()
 	if e != nil {
@@ -123,7 +141,7 @@ func Run(args []string) error {
 	if e != nil {
 		return e
 	}
-	h := &host{ctx: ctx, cancel: cancel, in: make(chan func(), 128), dirty: make(chan struct{}, 1), out: json.NewEncoder(write), dialogs: map[int]func(any){}}
+	h := &host{ctx: ctx, cancel: cancel, in: make(chan struct{}, 1), dirty: make(chan struct{}, 1), out: json.NewEncoder(write), dialogs: map[int]func(any){}}
 	if acquired {
 		if b, e = newBridge(h, data); e != nil {
 			return e
@@ -141,8 +159,8 @@ func Run(args []string) error {
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
-		case fn := <-h.in:
-			fn()
+		case <-h.in:
+			h.drain()
 		case <-h.dirty:
 			if refresh == nil {
 				refresh = time.After(40 * time.Millisecond)

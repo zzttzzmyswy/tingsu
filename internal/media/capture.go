@@ -15,6 +15,42 @@ import (
 const Rate = 16000
 const bytesPerSecond = 2 * Rate
 const FirstChunkSeconds = 3
+const FirstChunkMaxSeconds = 6
+
+// openingCut locates a short quiet spell after the first phrase. Checking each
+// 20 ms window once allows real-time capture to respond as a pause occurs,
+// while bounding latency during uninterrupted speech or an empty room.
+type openingCut struct{ examined, firstVoice, quiet int }
+
+func (c *openingCut) boundary(pcm []byte, steady int) int {
+	const window = bytesPerSecond / 50
+	limit := min(steady, FirstChunkMaxSeconds*bytesPerSecond)
+	for c.examined+window <= min(len(pcm), limit) {
+		start := c.examined
+		c.examined += window
+		var energy int64
+		for i := start; i < c.examined; i += 2 {
+			v := int64(int16(binary.LittleEndian.Uint16(pcm[i:])))
+			energy += v * v
+		}
+		const quietRMS = 120
+		if energy > int64(window/2)*quietRMS*quietRMS {
+			if c.firstVoice == 0 {
+				c.firstVoice = start + 1
+			}
+			c.quiet = 0
+		} else {
+			c.quiet += window
+		}
+		if c.examined >= FirstChunkSeconds*bytesPerSecond && c.firstVoice != 0 && c.examined-c.firstVoice >= 2*bytesPerSecond && c.quiet >= bytesPerSecond/5 {
+			return c.examined
+		}
+	}
+	if len(pcm) >= limit {
+		return limit
+	}
+	return 0
+}
 
 func WriteWAV(w io.Writer, pcm []byte) error {
 	var header [44]byte
@@ -137,7 +173,7 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 		return e
 	}
 	const sampleRate = float64(bytesPerSecond)
-	target := int(math.Round(min(chunk, FirstChunkSeconds)*Rate)) * 2
+	opening := &openingCut{}
 	steady := int(math.Round(chunk*Rate)) * 2
 	pending := []byte{}
 	cursor := offset
@@ -157,7 +193,7 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 		}
 		pending = pending[n:]
 		cursor = end
-		target = steady
+		opening = nil
 		return nil
 	}
 	block := make([]byte, 32*1024)
@@ -178,7 +214,14 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 			}
 			pending = append(pending, block[:n]...)
 			position(cursor + float64(len(pending))/sampleRate)
-			for len(pending) >= target {
+			for {
+				target := steady
+				if opening != nil {
+					target = opening.boundary(pending, steady)
+				}
+				if target == 0 || len(pending) < target {
+					break
+				}
 				if e = flush(target); e != nil {
 					break
 				}

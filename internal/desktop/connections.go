@@ -91,7 +91,10 @@ func (b *bridge) connect(a M) error {
 	ctx, cancel := context.WithCancel(b.ctx)
 	b.disconnect = cancel
 	go func() {
-		e := c.Connect(ctx)
+		e := c.Prepare(ctx, b.db.WorkspaceMeetings(mid))
+		if e == nil {
+			e = c.Connect(ctx)
+		}
 		sessions := []M{}
 		if e == nil && str(m["topic_id"]) == "" {
 			var all []M

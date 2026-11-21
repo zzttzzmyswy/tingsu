@@ -26,16 +26,19 @@ def main():
         env = dict(os.environ, CGO_ENABLED="0", GOOS="windows", GOARCH="amd64")
         exe = work / "Tingsu-Windows-x86_64.exe"
         windres = shutil.which("x86_64-w64-mingw32-windres") or "windres"
-        # Go links .syso resources by their actual paths. Build a private copy of the
-        # entry package inside the module so concurrent platforms need no shared writes.
-        with tempfile.TemporaryDirectory(prefix=".windows-build-", dir=ROOT) as src:
-            package = Path(src)
-            for path in (ROOT / "cmd/tingsu").glob("*.go"):
-                shutil.copyfile(path, package / path.name)
-            resource = package / "resources_windows_amd64.syso"
-            subprocess.run([windres, "--target=pe-x86-64", "resources.rc", "-O", "coff", "-o", resource], cwd=HERE, check=True)
-            subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -H=windowsgui",
-                            "-o", exe.resolve(), "./" + package.name], env=env, cwd=ROOT, check=True)
+        # Each build gets its own entry package with the canonical module path.
+        # Go's external linker needs a real .syso file alongside main.go.
+        module = work / "module"
+        (module / "cmd").mkdir(parents=True)
+        for name in ("go.mod", "go.sum"):
+            shutil.copyfile(ROOT / name, module / name)
+        shutil.copytree(ROOT / "internal", module / "internal")
+        package = module / "cmd/tingsu"
+        shutil.copytree(ROOT / "cmd/tingsu", package)
+        resource = (package / "resources_windows_amd64.syso").resolve()
+        subprocess.run([windres, "--target=pe-x86-64", "resources.rc", "-O", "coff", "-o", resource], cwd=HERE, check=True)
+        subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -H=windowsgui",
+                        "-o", exe.resolve(), "./cmd/tingsu"], env=env, cwd=module, check=True)
         notices = work / "go"
         subprocess.run([sys.executable, HERE.parent / "go-notices.py", notices.resolve()], cwd=ROOT, check=True)
         def tree(folder, prefix):

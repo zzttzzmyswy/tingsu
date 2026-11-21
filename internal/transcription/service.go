@@ -194,9 +194,8 @@ func (s *Service) consume(r *run) {
 		ended := r.ended
 		s.mu.Unlock()
 		if !failed && s.ctx.Err() == nil {
-			jobs, e := s.db.PendingJobs(r.mid)
-			if e == nil && len(jobs) > 0 {
-				job := jobs[0]
+			job, e := s.db.NextJob(r.mid)
+			if e == nil && job != nil {
 				var segments []store.Segment
 				segments, e = s.client.recognize(s.ctx, job.Path, r.config, job.Start, r.tracker)
 				if e == nil && s.ctx.Err() == nil {

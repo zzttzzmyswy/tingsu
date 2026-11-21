@@ -88,6 +88,13 @@ def install_licenses():
     tree("/usr/share/common-licenses", licenses / "common-licenses")
     versions = subprocess.check_output(["dpkg-query", "-W", "-f", "${binary:Package}\t${Version}\n"])
     (licenses / "ubuntu-package-versions.tsv").write_bytes(versions)
+    sources = subprocess.check_output(["dpkg-query", "-W", "-f",
+        "${binary:Package}\t${source:Package}\t${source:Version}\n"], text=True)
+    from urllib.parse import quote
+    with (licenses / "ubuntu-source-versions.tsv").open("w") as out:
+        for row in sources.splitlines():
+            _, name, version = row.split("\t")
+            out.write(row + "\thttps://launchpad.net/ubuntu/+source/" + quote(name) + "/" + quote(version) + "\n")
 
 
 for tool in tools:

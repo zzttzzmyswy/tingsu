@@ -347,6 +347,14 @@ type Segment struct {
 	Speaker, Text string
 }
 
+func (s *Store) NextJob(mid string) (*Job, error) {
+	q := s.read()
+	r := q.one("SELECT path,start,end FROM jobs WHERE meeting=? ORDER BY start,path LIMIT 1", mid)
+	if r == nil {
+		return nil, q.err
+	}
+	return &Job{Path: str(r["path"]), Start: num(r["start"]), End: num(r["end"])}, nil
+}
 func (s *Store) PendingJobs(mid string) ([]Job, error) {
 	q := s.read()
 	jobs := []Job{}

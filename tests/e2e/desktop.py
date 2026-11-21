@@ -99,7 +99,7 @@ class Page:
 
     def click(self, action, match="", area=""):
         selector = json.dumps(area + '[data-action="' + action + '"]')
-        expr = f"Array.from(document.querySelectorAll({selector})).find(e=>e.getClientRects().length && !e.disabled && e.innerText.includes({json.dumps(match)}))"
+        expr = f"Array.from(document.querySelectorAll({selector})).find(e=>e.getClientRects().length && !e.disabled && !e.closest('[inert]') && e.innerText.includes({json.dumps(match)}))"
         self.until("!!" + expr)
         print("GUI", action, flush=True)
         self.js("setTimeout(()=>"+expr+".click(),0);true")

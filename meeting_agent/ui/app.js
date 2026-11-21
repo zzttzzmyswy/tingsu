@@ -1064,7 +1064,7 @@ function onDesktopEvent(name, value) {
     if (name === "settings-saved" && modal === "settings") close();
     if (name === "agent-catalog") document.querySelectorAll("[data-cli-options]").forEach(refreshCliFields);
     if (name === "topic-saved" && modal === "join-topic") close();
-    if (name === "note-saved") finishBoardNote();
+    if (name === "note-saved") finishBoardNote(value);
     if (name === "position" && S) {
       const e = $("#meta .mono");
       if (e) e.textContent = duration(Number(value) - S.meeting.origin, true);

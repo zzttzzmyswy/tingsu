@@ -28,7 +28,7 @@ func Desktop() string {
 	if v := os.Getenv("TINGSU_CAPTURE_DESKTOP"); v != "" {
 		return v
 	}
-	if v := os.Getenv("XDG_SESSION_TYPE"); v != "" {
+	if v := os.Getenv("XDG_SESSION_TYPE"); v == "wayland" || v == "x11" {
 		return v
 	}
 	if os.Getenv("WAYLAND_DISPLAY") != "" {

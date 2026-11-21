@@ -29,8 +29,9 @@ func (l library) dir() string {
 }
 
 type material struct {
-	path string
-	info M
+	path   string
+	info   M
+	source string
 }
 
 func describe(path, id string) (material, error) {
@@ -42,7 +43,7 @@ func describe(path, id string) (material, error) {
 		return material{}, errors.New("请选择普通文件")
 	}
 	m := strings.Split(mime.TypeByExtension(strings.ToLower(filepath.Ext(path))), ";")[0]
-	return material{path, M{"id": id, "name": i.Name(), "size_bytes": i.Size(), "mime_type": first(m, "application/octet-stream")}}, nil
+	return material{path: path, info: M{"id": id, "name": i.Name(), "size_bytes": i.Size(), "mime_type": first(m, "application/octet-stream")}}, nil
 }
 func (l library) stage(ctx context.Context, source string) (material, error) {
 	f, e := os.Open(source)
@@ -102,7 +103,29 @@ func (r ctxReader) Read(b []byte) (int, error) {
 	}
 	return r.r.Read(b)
 }
+func (l library) stageAll(ctx context.Context, paths []string) ([]material, error) {
+	selected := make([]material, 0, len(paths))
+	for _, p := range paths {
+		if e := ctx.Err(); e != nil {
+			return nil, e
+		}
+		m, e := l.stage(ctx, p)
+		if e != nil {
+			return nil, e
+		}
+		m.source = p
+		selected = append(selected, m)
+	}
+	return selected, nil
+}
 func (l library) inputs(ctx context.Context, provider, text string, files []string, frame string, meeting M) ([]M, error) {
+	staged, e := l.stageAll(ctx, files)
+	if e != nil {
+		return nil, e
+	}
+	return l.blocks(provider, text, staged, frame, meeting)
+}
+func (l library) blocks(provider, text string, files []material, frame string, meeting M) ([]M, error) {
 	remote := provider == "openai"
 	request := M{"request": text, "meeting_context": encode(meeting)}
 	if runtime.GOOS == "windows" && provider == "codex" {
@@ -117,11 +140,8 @@ func (l library) inputs(ctx context.Context, provider, text string, files []stri
 		}
 		native = append(native, m)
 	}
-	for _, p := range files {
-		m, e := l.stage(ctx, p)
-		if e != nil {
-			return nil, e
-		}
+	for _, m := range files {
+		p := m.source
 		if remote {
 			native = append(native, m)
 		} else {
@@ -226,19 +246,18 @@ func (l library) tool(name string, a M) (any, error) {
 		return nil, e
 	}
 	format := str(a["format"])
-	f, e := os.Open(m.path)
+	path := m.path
+	if format == "text" && isOffice(path) {
+		path, e = l.officeView(m)
+		if e != nil {
+			return nil, e
+		}
+	}
+	reader, e := os.Open(path)
 	if e != nil {
 		return nil, e
 	}
-	defer f.Close()
-	var reader io.ReadSeeker = f
-	if format == "text" && isOffice(m.path) {
-		var buf bytes.Buffer
-		if e := officeText(m.path, &buf); e != nil {
-			return nil, e
-		}
-		reader = bytes.NewReader(buf.Bytes())
-	}
+	defer reader.Close()
 	size, e := reader.Seek(0, io.SeekEnd)
 	if e != nil {
 		return nil, e
@@ -310,6 +329,13 @@ func (l library) tool(name string, a M) (any, error) {
 	return M{"filename": m.info["name"], "format": format, "offset": start, "next_offset": end, "view_bytes": size, "eof": end >= size, "content": content}, nil
 }
 func within(root, path string) (string, error) {
+	// Native tools reopen the original name. A symlink before ".." may resolve
+	// differently from filepath.Join's lexical simplification.
+	for _, component := range strings.Split(filepath.ToSlash(path), "/") {
+		if component == ".." {
+			return "", errors.New("请选择会议工作目录中的文件")
+		}
+	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
 	}
@@ -326,4 +352,36 @@ func within(root, path string) (string, error) {
 		return "", fmt.Errorf("请选择会议工作目录中的文件")
 	}
 	return real, nil
+}
+
+// Cache the UTF-8 view only when the cloud provider explicitly asks for one.
+// Native agents continue to work directly on the original.
+func (l library) officeView(m material) (string, error) {
+	dir := filepath.Join(l.root, ".text-cache")
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		return "", e
+	}
+	dest := filepath.Join(dir, str(m.info["id"]))
+	if _, e := os.Stat(dest); e == nil {
+		return dest, nil
+	}
+	tmp, e := os.CreateTemp(dir, ".extracting-")
+	if e != nil {
+		return "", e
+	}
+	defer os.Remove(tmp.Name())
+	e = officeText(m.path, tmp)
+	ce := tmp.Close()
+	if e != nil {
+		return "", e
+	}
+	if ce != nil {
+		return "", ce
+	}
+	if e = os.Rename(tmp.Name(), dest); e != nil {
+		if _, err := os.Stat(dest); err != nil {
+			return "", e
+		}
+	}
+	return dest, nil
 }

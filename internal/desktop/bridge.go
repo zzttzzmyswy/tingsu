@@ -343,7 +343,9 @@ func (b *bridge) turnFrame(mid string, at float64) string {
 	if err != nil || b.frameRequest.Load() != r {
 		return ""
 	}
-	b.gotFrame(r.version, path)
+	if r.live == nil {
+		b.gotFrame(r.version, path)
+	}
 	return path
 }
 func (b *bridge) gotFrame(version int, path string) {

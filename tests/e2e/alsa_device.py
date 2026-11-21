@@ -204,30 +204,36 @@ def run(app, folder):
         page.click("create-start")
         page.until(f"S.meeting.title==={json.dumps(TITLE)} && S.capture==='recording'")
 
+        chunks = {}
+
         def captured_expected_pcm():
+            # The low-latency first chunk can end at a pause. Verify the exact same
+            # PCM byte stream across file boundaries, before successful jobs unlink it.
             for path in (data / "audio").rglob("*.wav"):
+                if path in chunks:
+                    continue
                 try:
+                    order = path.stat().st_mtime_ns
                     with wave.open(str(path), "rb") as audio:
-                        if audio.getnframes() != RATE * CHUNK_SECONDS:
-                            continue
-                        captured = audio.readframes(audio.getnframes())
+                        size = audio.getnframes()
+                        captured = audio.readframes(size)
+                    if size and len(captured) == size * 2:
+                        chunks[path] = (order, captured)
                 except (EOFError, wave.Error, FileNotFoundError):
                     continue
-                if len(captured) == len(pcm):
-                    assert (
-                        captured == pcm
-                    ), "The virtual ALSA input differs from the generated speech"
-                    return True
-            return False
+            received = b"".join(data for _, data in sorted(chunks.values()))
+            if len(received) < len(pcm):
+                return False
+            assert received[:len(pcm)] == pcm, "The virtual ALSA input differs from the generated speech"
+            return True
 
-        wait(
-            captured_expected_pcm, "eight-second WAV from the selected ALSA device", 35
-        )
+        wait(captured_expected_pcm, "eight seconds from the selected ALSA device", 35)
         time.sleep(1.4)
         page.click("stop")
         page.until("S.capture==='idle'", 120)
         view = page.js("document.querySelector('#feed-list').innerText")
         with contextlib.closing(sqlite3.connect(data / "studio.sqlite3")) as db:
+            duration = db.execute("SELECT duration FROM meetings WHERE title=?", (TITLE,)).fetchone()[0]
             rows = list(
                 db.execute(
                     "SELECT e.at,e.end,e.speaker,e.text FROM events e JOIN meetings m ON e.meeting=m.id "
@@ -241,7 +247,7 @@ def run(app, folder):
         spoken = " ".join(text for _, _, _, text in rows).lower()
         assert all(word in spoken for word in ("friday", "slides")), rows
         assert all(
-            0 <= start < end <= CHUNK_SECONDS
+            0 <= start < end <= duration
             and speaker
             and speaker in view
             and text in view

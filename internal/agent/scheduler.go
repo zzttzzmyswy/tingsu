@@ -19,9 +19,13 @@ type Hooks struct {
 	Stream   func(string)
 	Notify   func(string, string)
 }
+type stagedFiles struct {
+	files []material
+	err   error
+}
 type submission struct {
 	text  string
-	files []string
+	ready <-chan stagedFiles
 }
 type task struct {
 	context.Context
@@ -29,9 +33,8 @@ type task struct {
 	mid  string
 	c    *Client
 	submission
-	gen               uint64
-	follow, automatic bool
-	partial           string
+	follow  bool
+	partial string
 }
 type Scheduler struct {
 	mu sync.Mutex
@@ -40,7 +43,6 @@ type Scheduler struct {
 	h                    Hooks
 	mid                  string
 	c                    *Client
-	gen                  uint64
 	auto, check, pending bool
 	last                 float64
 	next                 []submission
@@ -62,7 +64,6 @@ func (s *Scheduler) Detach() {
 	if s.active != nil {
 		s.active.stop()
 	}
-	s.gen++
 	s.active = nil
 	s.mid = ""
 	s.c = nil
@@ -131,9 +132,9 @@ func (s *Scheduler) Submit(text string, files []string) error {
 	s.gate.Lock()
 	s.mu.Lock()
 	mid := s.mid
-	ok := s.c != nil
+	client := s.c
 	s.mu.Unlock()
-	if !ok {
+	if client == nil {
 		s.gate.Unlock()
 		return errors.New("请先连接 AI 会话")
 	}
@@ -141,8 +142,15 @@ func (s *Scheduler) Submit(text string, files []string) error {
 		s.gate.Unlock()
 		return e
 	}
+	entry := submission{text: text}
+	if len(files) > 0 {
+		ready := make(chan stagedFiles, 1)
+		entry.ready = ready
+		paths := append([]string(nil), files...)
+		go func() { originals, err := client.stage(client.life, mid, paths); ready <- stagedFiles{originals, err} }()
+	}
 	s.mu.Lock()
-	s.next = append(s.next, submission{text, append([]string(nil), files...)})
+	s.next = append(s.next, entry)
 	s.mu.Unlock()
 	s.gate.Unlock()
 	s.start()
@@ -155,7 +163,7 @@ func (s *Scheduler) start() {
 		s.mu.Unlock()
 		return
 	}
-	t := &task{mid: s.mid, c: s.c, gen: s.gen}
+	t := &task{mid: s.mid, c: s.c}
 	switch {
 	case len(s.next) > 0:
 		t.submission = s.next[0]
@@ -166,7 +174,6 @@ func (s *Scheduler) start() {
 		s.check = false
 	case s.pending:
 		t.text = autoPrompt
-		t.automatic = true
 		s.pending = false
 	default:
 		s.mu.Unlock()
@@ -200,6 +207,15 @@ func (s *Scheduler) run(t *task) {
 	if t.follow && s.h.Pending != nil {
 		items, e = s.h.Pending(t.mid)
 	}
+	var originals []material
+	if t.ready != nil {
+		select {
+		case snapshot := <-t.ready:
+			originals, e = snapshot.files, snapshot.err
+		case <-t.Done():
+			e = t.Err()
+		}
+	}
 	if (!t.follow || len(items) > 0) && e == nil && t.Err() == nil {
 		s.changed()
 		var meeting M
@@ -214,7 +230,7 @@ func (s *Scheduler) run(t *task) {
 			} else if s.h.Frame != nil {
 				frame = s.h.Frame(t.mid, at)
 			}
-			reply, e = t.c.Send(t.Context, t.mid, t.text, t.files, frame, meeting, func(piece string) {
+			reply, e = t.c.send(t.Context, t.mid, t.text, originals, frame, meeting, func(piece string) {
 				if t.follow {
 					return
 				}

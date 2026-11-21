@@ -11,5 +11,8 @@ if [ ! -x "$TINGSU_DESKTOP_HOST" ]; then
     mkdir -p "$project/build"
     "$project/desktop/linux/build.sh" "$TINGSU_DESKTOP_HOST"
 fi
+if [ ! -x "$project/build/tingsu-portal" ]; then
+    "$project/desktop/portal/build.sh" "$project/build/tingsu-portal"
+fi
 go build -trimpath -o "$project/build/tingsu" ./cmd/tingsu
 exec "$project/build/tingsu" "$@"

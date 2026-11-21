@@ -150,7 +150,7 @@ func (b *bridge) command(name string, a M) error {
 			return e
 		}
 		b.publish()
-		b.event("note-saved", "")
+		b.event("note-saved", str(a["editor"]))
 	case "export":
 		m := b.current()
 		title := strings.Map(func(r rune) rune {
@@ -204,15 +204,13 @@ func (b *bridge) command(name string, a M) error {
 			s := b.live
 			v := b.screenVersion
 			go func() {
-				p, e := s.Snapshot(b.ctx)
+				_, e := s.Snapshot(b.ctx)
 				if e != nil {
 					b.post(func() {
 						if b.screenVersion == v {
 							b.fail(e)
 						}
 					})
-				} else {
-					b.gotFrame(v, p)
 				}
 			}()
 			return nil

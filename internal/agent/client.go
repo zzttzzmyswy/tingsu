@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 )
 
@@ -136,7 +135,17 @@ func (c *Client) Open(ctx context.Context, id, title string) (string, error) {
 	return sid, e
 }
 func (c *Client) Close() { c.stop(); c.op.Lock(); defer c.op.Unlock(); c.impl.close() }
+func (c *Client) stage(ctx context.Context, mid string, files []string) ([]material, error) {
+	return (library{root: c.Workspace(), scope: mid}).stageAll(ctx, files)
+}
 func (c *Client) Send(ctx context.Context, mid, text string, files []string, frame string, meeting M, delta func(string), tool Tool) (string, error) {
+	staged, e := c.stage(ctx, mid, files)
+	if e != nil {
+		return "", e
+	}
+	return c.send(ctx, mid, text, staged, frame, meeting, delta, tool)
+}
+func (c *Client) send(ctx context.Context, mid, text string, files []material, frame string, meeting M, delta func(string), tool Tool) (string, error) {
 	c.op.Lock()
 	defer c.op.Unlock()
 	ctx, done := c.scope(ctx)
@@ -146,7 +155,7 @@ func (c *Client) Send(ctx context.Context, mid, text string, files []string, fra
 		return "", errors.New("请先创建或选择 AI 会话")
 	}
 	lib := library{root: c.Workspace(), scope: mid}
-	inputs, e := lib.inputs(ctx, c.cfg.Provider, text, files, frame, meeting)
+	inputs, e := lib.blocks(c.cfg.Provider, text, files, frame, meeting)
 	if e != nil {
 		return "", e
 	}
@@ -226,7 +235,7 @@ func cut(s string, n int) string {
 func specs(local, office bool) []M {
 	out := []M{}
 	for _, s := range kit.Tools {
-		if local && strings.HasSuffix(str(s["name"]), "attachment") || local && s["name"] == "list_attachments" {
+		if local && (s["name"] == "read_attachment" || s["name"] == "list_attachments") {
 			continue
 		}
 		out = append(out, s)
@@ -336,4 +345,41 @@ func check(e error, msg string) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w", msg, e)
+}
+
+// Prepare preserves the original attachments when an independent meeting joins a topic.
+func (c *Client) Prepare(ctx context.Context, meetings []string) error {
+	for _, mid := range meetings {
+		original := filepath.Join(c.cfg.DataDir, "workspaces", digest("meeting:" + mid)[:24])
+		if original == c.Workspace() {
+			continue
+		}
+		from, to := library{original, mid}, library{c.Workspace(), mid}
+		dirs, e := os.ReadDir(from.dir())
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		for _, dir := range dirs {
+			if e := ctx.Err(); e != nil {
+				return e
+			}
+			if !dir.IsDir() || !digestRE.MatchString(dir.Name()) {
+				continue
+			}
+			if _, e = to.get(dir.Name()); e == nil {
+				continue
+			}
+			m, e := from.get(dir.Name())
+			if e != nil {
+				return e
+			}
+			if _, e = to.stage(ctx, m.path); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
 }

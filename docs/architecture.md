@@ -55,6 +55,8 @@ AppImage 与 Windows 单文件 EXE 各自打包 C++ 窗口、Python 和媒体工
 - **Linux。** AppRun 会设置 PATH、PYTHONHOME、PYTHONPATH、LD_LIBRARY_PATH 和 GStreamer 等变量。包内 FFmpeg 需要随包的库，外部 CLI 则可能使用自己的 Node、Python 或动态库。AppRun 现在记录它修改的宿主变量，LocalCLI 为外部程序还原，保留当前用户的登录配置与网络设置。设置页也可指定绝对路径，解决桌面 PATH 与交互终端不同的问题。
 - **Windows。** PyInstaller 除了临时解包目录，还会改变 DLL 搜索目录。Windows 启动器在单独的进程内恢复 DLL 搜索目录，使用 Job Object 管理 CLI 和它启动的子进程。外部程序通过原生 EXE 或 npm 包声明的入口启动，标准输入发送指令与材料路径，附件原件位于 Agent 工作目录。测试在含中文和空格的路径运行 Windows 可执行文件，分别取消请求、终止父进程，并用 Win32 进程句柄确认孙进程也退出。[原生启动器](../windows/native/host.cpp) · [启动器验收](../tests/windows/host_cli.py) · [PyInstaller 外部程序说明](https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html#launching-external-programs-from-the-frozen-application)
 
+在 Windows 上，Codex 的受限 PowerShell 有时从安装目录启动。听序把会议工作目录、附件原名及绝对路径一并交给系统 Codex；路径含中文时还提供 UTF-16 码元，以便受限模式直接还原。非提权沙箱读取私有目录时，听序针对本次选定的工作区，为当前 Windows 登录会话设置目录读取和遍历权限，以及附件原件的只读权限。[附件传递](../meeting_agent/agent_materials.py) · [工作区只读授权](../meeting_agent/windows_workspace.py)
+
 ## 剩余耦合与改进顺序
 
 | 优先级与触发条件 | 现有代码的具体影响 | 建议的边界与验收 |

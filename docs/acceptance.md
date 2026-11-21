@@ -9,6 +9,12 @@
 - 在两个主题各开五场会议，检查从首场继承的问题、提醒、解决状态和另一主题的隔离。另用 v1.3.0 的真实 GUI 添加材料并建立会话，再用 v1.4.0 打开同一配置。即使原文件已经删除，原会议和会话仍可恢复，系统 Claude 的工作目录里也有逐字节相同的材料。[主题回归](../tests/e2e/topic_board.py) · [附件迁移与隔离](../tests/test_workspace_materials.py)
 - 系统 Codex、两个版本的 Claude Code 和 DeepSeek Harness 从工作目录按路径读取附件。长文和表格测试以文件末尾或指定单元格中的随机内容校验实际读取结果。回归分别覆盖真实外部 CLI、本地模型协议端点及在线服务。[Codex 读文件](../tests/test_codex_workspace.py) · [Claude 文件工具](../tests/test_claude.py) · [Harness 文件工具](../tests/test_deepseek.py)
 
+Windows Server 2025 在原生桌面通过系统 WebView2 启动待发布 EXE。辅助功能测试通过系统 UI Automation 创建会议并在重启后读回。另一组测试通过 Windows 原生对话框导入中文文件名的 AVI、核对解码后的像素、将会议导出成 Markdown，并验证了十项工作台交互及排队与取消。另一个独立配置验证两个主题各五场的便签隔离、提醒和状态更新。[Windows 辅助功能](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825337) · [工作台和媒体](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825184) · [主题看板](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825206)
+
+Windows 的中文附件专项把同一份最终 EXE 与另外安装的官方 Codex CLI 连接。回环模型通过真实 PowerShell 工具检索三万行 CSV，核对中文原名和随机末行。删除上传位置的文件并正常关闭应用后，重新进入同一会话，再次从工作目录副本读出相同内容。测试对工作目录含中文和空格、只读权限、绝对路径与相对路径均有校验。[Windows 成品与系统 Codex](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825213) · [源码集成](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825205)
+
+最终 Linux AppImage 的 16 项端到端测试全部首轮通过，覆盖系统 Agent 原文件读取、主题便签、升级、选窗与音频输入、在线转写和故障恢复。每项测试均核对成品 SHA-256 为 `3aa5333103524c2d054883f3d773cb684a9a3eff4b2cb5fe200b2a21dd39161d`。
+
 Linux 执行单元和集成套件 70 项，其中 69 项通过，专属 Windows 的 Program Files 查找用例转到 Windows Python / Wine 后通过。Windows Python / Wine 还通过工作目录、Office、真实 Claude/DeepSeek CLI 和跨会工具的 20 项集成测试。两份成品均检查了源码与归档的一致性。Windows 包内的 WASAPI 与窗口采集组件与 v1.3.0 成品逐字节相同，详见下方历史采集实测。[Windows 服务测试](../tests/test_local_cli.py) · [打包体积](package-size.md)
 
 ## v1.3.0 系统 Agent、会议材料与 Wayland 选窗

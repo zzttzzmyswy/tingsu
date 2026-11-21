@@ -7,13 +7,13 @@
 | 平台 | v1.3.0 | v1.4.0 | 减少 | 距上限 |
 |---|---:|---:|---:|---:|
 | Linux AppImage | 308.30 MB | 91.43 MB（91,425,272 字节） | 70.34% | 8.57 MB |
-| Windows EXE | 257.71 MB | 93.57 MB（93,567,288 字节） | 63.69% | 6.43 MB |
+| Windows EXE | 257.71 MB | 93.58 MB（93,576,676 字节） | 63.69% | 6.42 MB |
 
 原先由 Python / PySide6 创建的 Qt WebEngine 窗口已改用 C++ 实现。Linux 通过 GTK 3 使用桌面的 WebKitGTK，Windows 通过 Win32 使用系统 WebView2。同一套 HTML 工作台和 Python 会议服务继续处理转写、截图、会话、附件和便签。系统 Agent CLI 仍可独立升级。两个单文件均包含 FFmpeg 和 ffprobe。[Linux 窗口实现](../desktop/linux/main.cpp) · [Windows 窗口实现](../windows/native/webview.cpp)
 
 首次配置机器时，Linux 需要 GTK 3、JSON-GLib 与 WebKitGTK 4.1 或兼容的 4.0，Windows 需要 WebView2 Evergreen。上表只统计下载听序所需的发行文件，系统引擎的安装、应用缓存和会议材料另外占用磁盘。[运行环境和启动步骤](../README.md) · [v1.4.0 单文件与 SHA-256](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.4.0)
 
-Windows 成品中，FFmpeg 和 ffprobe 两个压缩条目分别为 40.31 MB、40.20 MB，合计占下载文件的 **86.05%**。Linux 包展开后，x265、Codec2 和 libavcodec 各占约 15–16 MB，且部分依赖被多个命令共同使用。如果继续压缩，优先实测 Windows 共用编解码 DLL，并以真实会议录屏、音频输入和取帧用例验证 Linux 编解码组件的裁剪范围。展开尺寸不能直接换算成下载体积的节省量。
+Windows 成品中，FFmpeg 和 ffprobe 两个压缩条目分别为 40.31 MB、40.20 MB，合计占下载文件的 **86.04%**。Linux 包展开后，x265、Codec2 和 libavcodec 各占约 15–16 MB，且部分依赖被多个命令共同使用。如果继续压缩，优先实测 Windows 共用编解码 DLL，并以真实会议录屏、音频输入和取帧用例验证 Linux 编解码组件的裁剪范围。展开尺寸不能直接换算成下载体积的节省量。
 
 ## v1.3.0 外置系统 Agent
 

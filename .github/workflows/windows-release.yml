@@ -118,6 +118,7 @@ jobs:
           Write-Host "System WebView2 version $version"
 
       - name: Install the official external Codex CLI for this test
+        id: verify_tools
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -135,7 +136,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Codex failed to start on Windows' }
           python -m pip install websocket-client==1.8.0 pillow==11.3.0
 
+      - name: Create and reopen a meeting with Windows UI Automation
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          python -u tests/e2e/native_windows_uia.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
+
       - name: Run the GUI, receive a reply and resume the session after restart
+        if: ${{ !cancelled() && steps.verify_tools.outcome == 'success' }}
         shell: pwsh
         env:
           PYTHONUTF8: '1'

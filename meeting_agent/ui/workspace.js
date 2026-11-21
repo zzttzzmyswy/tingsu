@@ -143,13 +143,69 @@ function updateButtonList(node, html, fallback) {
 
 function renderMeetingList() {
   const word = $("#meeting-find").value.trim().toLocaleLowerCase();
-  const meetings = S.meetings.filter((m) => m.title.toLocaleLowerCase().includes(word));
+  const meetings = S.meetings.filter((m) =>
+    [m.title, m.topic_name || ""].some((s) => s.toLocaleLowerCase().includes(word)));
   const html = meetings.map((m) =>
     '<button class="recent-item ' + (m.id === S.meeting.id ? "active" : "") +
     '" data-action="select" data-id="' + esc(m.id) + '" title="' + esc(m.title) +
-    '"><i class="recent-dot"></i><span>' + esc(m.title) + "</span></button>").join("") ||
+    '"><i class="recent-dot"></i><span>' + esc(m.title) +
+    (m.topic_name ? '<small class="recent-topic">' + esc(m.topic_name) + '</small>' : '') +
+    "</span></button>").join("") ||
     '<p class="no-meetings">没有匹配的会议</p>';
   updateButtonList($("#meetings"), html, $('[data-action="find-meeting"]'));
+}
+
+function topicFields(selected, joining = false) {
+  const topics = S.topics || [];
+  const newTopic = joining && !topics.length;
+  return '<label class="field">会议主题<select id="topic-select">' +
+    opt("", joining ? "请选择主题" : "独立会议", !selected && !newTopic) +
+    topics.map((t) => opt(t.id, t.name + " · " + t.meeting_count + " 场", t.id === selected)).join("") +
+    opt("new-topic", "＋ 新建主题", newTopic) +
+    '</select></label><label class="field" id="topic-name-field"' + (newTopic ? '' : ' hidden') +
+    '>新主题名称<input id="topic-name" maxlength="80" placeholder="例如，产品路线图"></label>';
+}
+
+function chosenTopic() {
+  const id = $("#topic-select").value;
+  if (id !== "new-topic") return id ? {topic_id: id} : {};
+  const name = $("#topic-name").value.trim();
+  if (name) return {topic_name: name};
+  $("#topic-name").focus();
+  toast("请输入新主题名称", "error");
+  return null;
+}
+
+function topicButton(m) {
+  if (m.demo) return "";
+  return '<i class="sep"></i><button class="meta-topic" data-action="topic" title="' +
+    esc(m.topic_id ? "查看主题「" + m.topic_name + "」的全部会议" : "让本场会议的记录可供同主题的 AI 使用") +
+    '">' + icon("layers") + '<span>' + esc(m.topic_id ? m.topic_name : "归入主题") +
+    '</span>' + icon("chevronRight", 11) + '</button>';
+}
+
+function topicDialog() {
+  const m = S.meeting;
+  if (!m.topic_id) {
+    dlg("join-topic", "将本场会议归入主题", topicFields("", true) +
+      '<p class="hint">归入后，主题内的 AI 可以查阅本场记录。后续会议将使用所选主题的 AI 会话。</p>' +
+      '<div class="dialog-actions">' + btn("close", "取消") +
+      btn("topic-save", "归入主题", "layers", "primary") + '</div>');
+    return;
+  }
+  const meetings = S.meetings.filter((row) => row.topic_id === m.topic_id);
+  const rows = meetings.map((row) => {
+    const current = row.id === m.id;
+    const date = new Date(row.created).toLocaleString("zh-CN", {dateStyle:"medium", timeStyle:"short"});
+    return '<button class="session-row topic-row" data-action="select" data-id="' + esc(row.id) +
+      '"' + (current ? ' disabled aria-current="page"' : '') + '>' + icon("calendar", 16) +
+      '<span><b>' + esc(row.title) + '</b><small>' + esc(date) + '</small></span>' +
+      (current ? '<small>当前会议</small>' : icon("chevronRight", 13)) + '</button>';
+  }).join("");
+  dlg("topic", m.topic_name, '<p class="hint">共 ' + meetings.length +
+    ' 场会议 · 同一 AI 服务沿用这个主题的会话。</p><div class="session-list topic-history">' + rows +
+    '</div><div class="dialog-actions">' + btn("close", "关闭") +
+    btn("topic-new-meeting", "以此主题开会", "plus", "primary") + '</div>');
 }
 
 function speakerStats() {

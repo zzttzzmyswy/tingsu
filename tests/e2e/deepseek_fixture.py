@@ -75,11 +75,17 @@ class Fixture(BaseHTTPRequestHandler):
         tool = None
         if results:
             # Claude can group both calls in one assistant message and both results in one user message.
-            if ("tool_read_transcript" in results and "tool_create_note" not in results
+            if ("tool_list_topic_meetings" in results and "tool_read_topic_history" not in results
+                    and "prior-topic-session" in last):
+                tool = ("read_topic_history", {"meeting_id": "prior-topic-session", "kind": "transcript",
+                                               "query": "预算", "offset": 0, "limit": 10})
+            elif ("tool_read_transcript" in results and "tool_create_note" not in results
                     and "ORCHID" in json.dumps(msgs, ensure_ascii=False)):
                 tool = ("create_note", {"kind": "task", "title": "验收行动项", "body": "ORCHID-718"})
         elif "ORCHID" in last:
             tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
+        elif "tingsu-recall-topic" in last:
+            tool = ("list_topic_meetings", {"query": "", "offset": 0, "limit": 10})
         events = [{"type": "message_start", "message": {"id": "msg_" + uuid4().hex, "type": "message", "role": "assistant",
                   "model": MODEL, "content": [], "usage": {"input_tokens": 12, "output_tokens": 0}}}]
         if tool:
@@ -88,7 +94,10 @@ class Fixture(BaseHTTPRequestHandler):
             delta = {"type": "input_json_delta", "partial_json": json.dumps(args, ensure_ascii=False)}
         else:
             block = {"type": "text", "text": ""}
-            delta = {"type": "text_delta", "text": "已收到会议内容。" if "tool_result" not in last else "已完成本场会议的便签。"}
+            text = "已收到会议内容。" if "tool_result" not in last else "已完成本场会议的便签。"
+            if "tool_read_topic_history" in results and "预算 417" in last:
+                text = "上场会议确认的预算 417。"
+            delta = {"type": "text_delta", "text": text}
         events.extend([
             {"type": "content_block_start", "index": 0, "content_block": block},
             {"type": "content_block_delta", "index": 0, "delta": delta},

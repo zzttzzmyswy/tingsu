@@ -54,7 +54,10 @@ if '--session-id' in args:
     image = content[1]['source']
     assert image == {'type':'base64','media_type':'image/png','data':'eA=='}
 listed = mcp('tools/list',{})['tools']
-assert set(t['name'] for t in listed) == {'list_notes','read_transcript','create_note','update_note','delete_note'}
+assert set(t['name'] for t in listed) == {
+    'list_notes', 'read_transcript', 'create_note', 'update_note', 'delete_note',
+    'list_topic_meetings', 'read_topic_history',
+}
 result = mcp('tools/call',{'name':'list_notes','arguments':{}})
 assert json.loads(result['content'][0]['text']) == {'result':['marker']}
 for part in ['ans','wer']:

@@ -122,7 +122,7 @@ class TurnService:
                 if token.is_set():
                     raise AgentCancelled("会议请求已结束")
                 result = self.store.tool(mid, name, args)
-            if name not in ("read_transcript", "list_notes"):
+            if name in ("create_note", "update_note", "delete_note"):
                 self.post(self.changed)
             return result
 

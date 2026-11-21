@@ -1,12 +1,22 @@
 # 听序桌面版验收记录
 
-本页记录 v1.0.0 两个 x86_64 单文件应用的实测结果，以及此前开发构建的验收历史。测试使用独立的用户配置、桌面和音频设备。从发行页下载所需文件，用同版本校验清单核对后，放入源码树的 `dist/` 即可复用下方命令。[v1.0.0 当次发行说明](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.0.0) · [Linux AppImage](https://github.com/zzttzzmyswy/tingsu/releases/download/v1.0.0/Tingsu-Linux-x86_64.AppImage) · [Windows EXE](https://github.com/zzttzzmyswy/tingsu/releases/download/v1.0.0/Tingsu-Windows-x86_64.exe) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/download/v1.0.0/SHA256SUMS)
+本页记录各版单文件应用的实测覆盖。下载对应版本的可执行文件并用同版本的 SHA-256 清单核对，放入源码树的 `dist/` 即可复用成品测试。[发行版本](https://github.com/zzttzzmyswy/tingsu/releases)
+
+## v1.1.0 跨场会议主题
+
+在隔离的 Linux Wayland 和 X11 桌面运行发行 AppImage。用同标题的会议交替参加两个主题各五次，在第六场结束时退出程序再打开。十场会议只创建两个 OpenAI Conversations 会话。测试模型在每场调用历史工具，核对可见的场次 ID、顺序，以及读回的首场聊天内容。测试还覆盖旧独立会议归入主题、查看主题列表和打开旧场次，以及模拟服务端会话丢失后重建其中一个主题、继续另一个主题。[可复跑的桌面测试](../tests/e2e/meeting_topics.py)
+
+40 项单元和集成测试通过，覆盖数据库升级、同主题各供应商独立续接、跨主题访问限制、并发绑定与失败恢复。真实 Codex 在线会话在第二场按原线程 ID 续接，从首场实际转写中取回自动摘录之外的随机编号，给出正确的场次和发言时间。另一个主题有同名会议和不同编号，测试核对了查询结果和回答。Claude Code 与 DeepSeek Harness 使用真实 CLI 连接本地测试模型，验证重启前后可调用同一组历史工具。OpenAI Responses 协议采用本地测试服务。[存储层测试](../tests/test_topics.py) · [连接恢复测试](../tests/test_topic_connections.py) · [AI 工具测试](../tests/test_topic_tools.py)
+
+Windows x64 单文件在两个独立的 Wine 桌面分别完成了上述十场主题场景，以及既有十项工作台操作、取消和回复排队。核对了成品中的 23 个 Python 模块、全部界面资源和 1.1.0.0 版本信息。
+
+另一次升级测试用 v1.0.0 AppImage 创建两场独立会议，为每场保存不同的会话、对话与便签，随后退出。在相同数据目录运行 v1.1.0，将其中一场归入主题。该主题下一场能够找回旧便签及未在自动摘录中出现的对话编号；工具拒绝读取另一场独立会议，后者的原会话仍可续接。
+
+同一 Linux AppImage 另行通过了 Wayland 门户共享窗口、在线转写和主动分析，以及 X11 上的转写失败重试、附件、便签、导出和重启回归。
 
 ## v1.0.0 公开发行构建
 
-公开构建通过通用模型名称 `Fun-ASR` 和用户自己的 API 密钥连接 Sophnet。页面顶部的发行资产和校验清单对应这次构建。
-
-公开版的 29 项单元和集成测试通过。在通用端点分别用全新默认配置和旧配置中的 EasyLLM ID 提交相同的合成音频，两种配置都返回了带时间戳和发言人的转写。单文件公开版的成品复验结果见本页顶部的发行说明。
+公开构建通过通用模型名称 `Fun-ASR` 和用户自己的 API 密钥连接 Sophnet。29 项单元和集成测试通过。在通用端点分别用全新默认配置和旧配置中的 EasyLLM ID 提交相同的合成音频，两种配置都返回了带时间戳和发言人的转写。[v1.0.0 发行说明和成品下载](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.0.0)
 
 ## 队列与工作台重构后的开发构建
 

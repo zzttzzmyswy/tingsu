@@ -26,6 +26,8 @@ flowchart LR
 
 转写完成后，TranscriptionService 发布包含会议 ID、末尾时间和是否有文字的通知。Bridge 将通知切回 Qt 主线程交给 TurnService。后者绑定当前会议和 Agent，决定是否立即分析。四种 Agent 经同一份工具契约读写当前会议的转写和便签。
 
+同一主题的不同场次可以续接同一个远端会话。SQLite 按「主题、供应商」保存会话 ID，每轮发送仍携带当前场次的标识。存储层用当前会议的归属和创建顺序限定历史查询。历史便签只供读取，新增、更新和删除仍限定在当前场次。独立会议继续使用原有的按场绑定。升级与续接可分别通过存储测试和桌面场景复验。[主题存储测试](../tests/test_topics.py) · [桌面回归](../tests/e2e/meeting_topics.py)
+
 - **转写队列** 先登记音频，再交给识别线程。保存发言和删除数据库任务处于同一事务，提交成功后才删 WAV。正常停止会排空尾片，退出或提交失败会将未完成任务留给下次重试。[转写服务](../meeting_agent/transcription_service.py) · [故障与恢复测试](../tests/test_transcription_service.py)
 - **AI 回复调度** 在同一会议连接中串行发送请求，按 FIFO 处理用户插话并合并自动分析。每轮分配独立取消标记，过期的工具请求、流式文本和完成事件会被丢弃。服务接受线程投递和取帧回调，可在普通 Python 测试中运行。[轮次服务](../meeting_agent/turn_service.py) · [调度测试](../tests/test_turn_service.py)
 - **存储层** 提供工作台快照、全文查找、近期上下文、音频任务和会话绑定接口。OpenAI 的账号会话索引与工具回执保留原数据库文件，SQL 同样由存储层负责。已有会议库首次打开时自动补建时间索引。[存储层](../meeting_agent/storage.py)

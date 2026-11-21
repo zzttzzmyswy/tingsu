@@ -127,7 +127,7 @@ function render() {
     '</span></span><i class="sep"></i><button class="meta-speakers" data-action="speakers" title="查看发言时长">' +
     icon("users") +
     S.speakers.length +
-    " 位发言人" + icon("chevronRight", 11) + "</button>";
+    " 位发言人" + icon("chevronRight", 11) + "</button>" + topicButton(m);
   const ended = S.media.some((x) => x.path === m.source && x.duration - m.duration <= 0.05);
   $("#actions").innerHTML =
     '<button class="secondary" title="导出会议记录" data-action="export">' +
@@ -407,7 +407,8 @@ function dlg(id, title, body, wide = false, focus = true) {
     body;
   requestAnimationFrame(() => {
     if (modal !== id || $("#dialog").contains(document.activeElement)) return;
-    const target = focus && $("#dialog input:not([type=checkbox])");
+    const target = focus && [...$("#dialog").querySelectorAll("input:not([type=checkbox]), select")]
+      .find((el) => el.getClientRects().length);
     (target || $('#dialog [data-action="close"]')).focus();
   });
 }
@@ -460,9 +461,13 @@ function showOffset() {
     box.hidden = !S.media.some((m) => m.path === s.value);
   }
 }
-function newMeeting(media = null, start = false) {
+function newMeeting(media = null, start = false, topic = "") {
   if (S.capture !== "idle") {
     toast("请先停止当前采集并等待转写完成。", "error");
+    return;
+  }
+  if (S.sending || S.queued) {
+    toast("请先结束当前 AI 回复，再新建会议。", "error");
     return;
   }
   requestedMedia = media?.path || "";
@@ -471,7 +476,9 @@ function newMeeting(media = null, start = false) {
     start ? "开始新会议" : "新建会议",
     '<label class="field">会议名称<input id="meeting-name" maxlength="120" placeholder="例如，产品设计周会" value="' +
       esc(media?.title || "") +
-      '"></label><label class="field">音频来源<select id="source-select"></select><small>单个应用需要先播放声音，才能在列表中出现。</small></label><label class="field" id="offset-field" hidden>从录屏时间开始<input id="offset" value="00:00" placeholder="分:秒"><small>可跳过录屏开头的等待时间。</small></label><div class="radio-row">' +
+      '"></label>' + topicFields(topic) +
+      '<p class="hint">同一主题的会议可以续用同一个 AI 会话，并查阅往期记录。</p>' +
+      '<label class="field">音频来源<select id="source-select"></select><small>单个应用需要先播放声音，才能在列表中出现。</small></label><label class="field" id="offset-field" hidden>从录屏时间开始<input id="offset" value="00:00" placeholder="分:秒"><small>可跳过录屏开头的等待时间。</small></label><div class="radio-row">' +
       btn("refresh-sources", "刷新设备", "refresh", "") +
       btn("import", "添加录屏", "import", "") +
       '</div><p class="hint" style="margin-top:15px">开始转写会将选中来源的音频片段发送给 ' +
@@ -527,8 +534,11 @@ function create(start) {
     return;
   }
   const title = $("#meeting-name").value.trim() || m?.title || "未命名会议";
-  close();
-  cmd("new", { title, source, start, offset });
+  const topic = chosenTopic();
+  if (topic) {
+    for (const button of $("#dialog").querySelectorAll('[data-action^="create"]')) button.disabled = true;
+    cmd("new", { title, source, start, offset, ...topic });
+  }
 }
 function noteDialog(n) {
   noteId = n?.id || "";
@@ -668,7 +678,8 @@ function agentDialog() {
     body =
       '<p class="body-copy">' +
       esc(titleFor(S.agentName)) +
-      ' 已连接到本场会议。</p><p class="session-id">' +
+      (S.meeting.topic_id ? ' 已连接到主题「' + esc(S.meeting.topic_name) + '」的共享会话。' :
+        ' 已连接到本场会议。') + '</p><p class="session-id">' +
       esc(S.session) +
       '</p><div class="dialog-actions">' +
       btn("disconnect", "断开连接", "plug", "secondary left") +
@@ -683,6 +694,18 @@ function agentDialog() {
       '正在连接 AI 会话…</div><div class="dialog-actions">' +
       btn("disconnect", "取消连接") +
       "</div>";
+  } else if (status === "choose" && S.meeting.topic_id) {
+    const savedSession = S.meetingSessions[S.agentName];
+    body = '<p class="body-copy">' + (savedSession
+      ? '暂时无法恢复主题「' + esc(S.meeting.topic_name) + '」的 AI 会话。'
+      : '为主题「' + esc(S.meeting.topic_name) + '」创建 ' + esc(titleFor(S.agentName)) + ' 会话。') +
+      '</p><p class="hint">' + (savedSession
+        ? '可重试原会话，或重建后供本主题继续使用。本地记录会保留。'
+        : '之后在此主题连接该服务时，会自动回到同一个会话。') +
+      '</p><div class="dialog-actions">' + btn("disconnect", "更换服务", "", "secondary left") +
+      (savedSession ? btn("session-replace", "重建会话") +
+        '<button class="primary" data-action="session" data-id="' + esc(savedSession) +
+        '">重试原会话</button>' : btn("session-new", "创建主题会话", "plus", "primary")) + '</div>';
   } else if (status === "choose") {
     const savedSession = S.meetingSessions[S.agentName];
     body =
@@ -717,8 +740,10 @@ function agentDialog() {
   } else {
     body =
       '<label class="field">AI 服务<select id="connect-provider">' +
-      providerOptions(S.settings.agent) +
-      '</select></label><p class="hint" id="provider-hint"></p><div class="dialog-actions">' +
+      providerOptions(S.meeting.topic_provider || S.settings.agent) +
+      '</select></label><p class="hint" id="provider-hint"></p>' +
+      (S.meeting.topic_id ? '<p class="hint">本次连接将使用主题「' + esc(S.meeting.topic_name) +
+        '」在所选服务中的会话。</p>' : '') + '<div class="dialog-actions">' +
       btn("ai-settings", "AI 设置", "sliders", "secondary left") +
       btn("codex-login", "登录 Codex") +
       btn("connect", "连接服务", "plug", "primary") +
@@ -801,6 +826,19 @@ function act(a, el) {
       return;
     case "new":
       return newMeeting();
+    case "topic":
+      return topicDialog();
+    case "topic-new-meeting":
+      return newMeeting(null, false, S.meeting.topic_id);
+    case "topic-save": {
+      const topic = chosenTopic();
+      if (!topic) return;
+      if (!topic.topic_id && !topic.topic_name) {
+        $("#topic-select").focus();
+        return toast("请选择主题", "error");
+      }
+      return cmd("set_meeting_topic", {meeting:S.meeting.id, ...topic});
+    }
     case "media":
       return newMeeting(S.media.find((m) => m.id === id));
     case "source":
@@ -948,6 +986,15 @@ function act(a, el) {
       return cmd("disconnect");
     case "session-new":
       return cmd("session", {});
+    case "session-replace":
+      return dlg("replace-topic-session", "为主题重建 AI 会话？",
+        '<p class="body-copy">今后连接「' + esc(S.meeting.topic_name) + '」的 ' +
+        esc(titleFor(S.agentName)) + ' 时，会使用新会话。本地保存的历次会议记录仍然可查。</p>' +
+        '<div class="dialog-actions">' + btn("agent", "返回") +
+        btn("confirm-session-replace", "重建主题会话", "plus", "primary") + '</div>');
+    case "confirm-session-replace":
+      agentDialog();
+      return cmd("session", {replace:true});
     case "session":
       return cmd("session", { id });
     case "session-id":
@@ -1000,6 +1047,11 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "connect-provider") providerHint();
   if (e.target.id === "ai-provider") showAgentFields();
   if (e.target.id === "source-select") showOffset();
+  if (e.target.id === "topic-select") {
+    const adding = e.target.value === "new-topic";
+    $("#topic-name-field").hidden = !adding;
+    if (adding) $("#topic-name").focus();
+  }
 });
 document.addEventListener("keydown", (e) => {
   if (e.isComposing) return;
@@ -1039,11 +1091,16 @@ icons();
 new QWebChannel(qt.webChannelTransport, (channel) => {
   B = channel.objects.studio;
   B.state.connect(onState);
-  B.notice.connect((text, kind) => toast(text, kind));
+  B.notice.connect((text, kind) => {
+    if (kind === "error" && modal === "new")
+      for (const button of $("#dialog").querySelectorAll('[data-action^="create"]')) button.disabled = false;
+    toast(text, kind);
+  });
   B.event.connect((name, value) => {
     if (name === "search-results") receiveMatches(value);
     if (name === "jump") jumpTo(Number(value));
     if (name === "settings-saved" && modal === "settings") close();
+    if (name === "topic-saved" && modal === "join-topic") close();
     if (name === "note-saved" && (modal === "note" || modal === "confirm-delete")) {
       close();
       if (noteForComposer) appendToComposer(noteForComposer);
@@ -1057,7 +1114,6 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
       view = "workspace";
       close();
     }
-    if (name === "choose" && modal === "agent") setTimeout(agentDialog, 70);
     if (name === "connected" && modal === "agent") close();
     if (name === "delta") {
       liveText = value;

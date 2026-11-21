@@ -304,7 +304,7 @@ class Bridge(QObject):
 
     def cmd_new(self, a):
         self.check_idle()
-        if self.turns.sending:
+        if self.turns.sending or self.turns.queued:
             raise ValueError("请先结束当前 AI 回复")
         title = str(a.get("title", "")).strip()[:120] or "未命名会议"
         source = a.get("source", "")
@@ -316,7 +316,8 @@ class Bridge(QObject):
         if offset and (not media or offset >= media["duration"]):
             raise ValueError("录屏起点必须在媒体时长之内")
         mid = self.store.create(title, source=self.source_key(src) if src else "",
-                                source_label=src.label if src else "", origin=offset)
+                                source_label=src.label if src else "", origin=offset,
+                                topic_id=a.get("topic_id", ""), topic_name=a.get("topic_name", ""))
         self.change(mid)
         if a.get("start"):
             self.cmd_start({})
@@ -327,6 +328,20 @@ class Bridge(QObject):
             raise ValueError("请输入会议名称")
         self.store.rename_meeting(self.mid, name)
         self.update()
+
+    def cmd_set_meeting_topic(self, a):
+        if a.get("meeting") != self.mid:
+            raise ValueError("会议已切换，请重新选择主题")
+        self.check_idle()
+        if self.turns.sending or self.turns.queued:
+            raise ValueError("请先结束当前 AI 回复，再加入主题。")
+        self.store.set_meeting_topic(self.mid, topic_id=a.get("topic_id", ""),
+                                     topic_name=a.get("topic_name", ""))
+        self.disconnect_agent()
+        self.files = []
+        self.publish()
+        self.event.emit("topic-saved", "")
+        self.notice.emit("会议已加入主题", "ok")
 
     def source(self, sid):
         found = next((s for s in self.sources if self.source_key(s) == sid), None)
@@ -558,7 +573,8 @@ class Bridge(QObject):
         if self.turns.sending:
             raise ValueError("AI 正在回复")
         self.disconnect_agent()
-        provider = a.get("provider") or self.settings.values["agent"]
+        meeting = self.current()
+        provider = a.get("provider") or meeting["topic_provider"] or self.settings.values["agent"]
         if provider not in PROVIDERS:
             raise ValueError("未知的 AI 服务")
         model = self.settings.values["model"] if provider == "openai" else ""
@@ -572,11 +588,19 @@ class Bridge(QObject):
 
         def connect():
             client.connect()
-            return client.list_sessions()
+            if meeting["topic_id"]:
+                return []
+            blocked = self.store.unavailable_session_ids(meeting["id"], provider)
+            return [s for s in client.list_sessions() if s["id"] not in blocked]
 
         def done(sessions):
-            if self.generation == generation:
-                self.sessions, self.agent_status = sessions, "choose"
+            if self.generation != generation:
+                return
+            self.sessions, self.agent_status = sessions, "choose"
+            saved = self.store.agent_sessions(self.mid).get(provider) if meeting["topic_id"] else None
+            if saved:
+                self.cmd_session({"id": saved})
+            else:
                 self.update()
                 self.event.emit("choose", "")
 
@@ -590,27 +614,46 @@ class Bridge(QObject):
     def cmd_session(self, a):
         if self.agent_status != "choose" or not self.client:
             raise ValueError("请先连接 AI 服务")
-        client, mid, generation = self.client, self.mid, self.generation
+        client, mid, generation, provider = self.client, self.mid, self.generation, self.agent_name
+        meeting = self.current()
+        requested = a.get("id") or None
+        saved = None
+        if meeting["topic_id"]:
+            saved = self.store.agent_sessions(mid).get(provider, "")
+            if requested and requested != saved:
+                raise ValueError("请选择本主题自己的 AI 会话。")
+            if saved and not requested and a.get("replace") is not True:
+                raise ValueError("本主题已有会话。请继续原会话，或明确选择重新建立。")
+        if requested:
+            self.store.check_agent_session(mid, provider, requested)
         self.agent_status = "connecting"
         self.update()
 
         def done(session):
             if generation != self.generation:
                 return
+            try:
+                if requested and meeting["topic_id"] and requested != session:
+                    raise ValueError("服务返回了不同的会话，请重试。")
+                self.store.bind_agent(mid, provider, session, expected_session=saved)
+            except Exception as exc:
+                failed(exc)
+                return
             self.session, self.agent_status = session, "ready"
-            self.store.bind_agent(mid, self.agent_name, session)
             self.turns.bind(mid, client, self.current()["duration"])
             self.update()
             self.event.emit("connected", "")
-            self.notice.emit("AI 会话已连接", "ok")
+            self.notice.emit("已连接主题「" + meeting["topic_name"] + "」的 AI 会话"
+                             if meeting["topic_id"] else "AI 会话已连接", "ok")
 
         def failed(exc):
             if generation == self.generation:
                 self.agent_status = "choose"
                 self.fail(exc)
+                self.event.emit("choose", "")
 
-        title = self.current()["title"]
-        self.work(lambda: client.open_session(a.get("id") or None, title=title), done, failed)
+        title = meeting["topic_name"] or meeting["title"]
+        self.work(lambda: client.open_session(requested, title=title), done, failed)
 
     def cmd_send(self, a):
         self.turns.submit(a.get("text", ""), self.files)

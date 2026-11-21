@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import threading
+import unicodedata
 import uuid
 import wave
 from array import array
@@ -113,6 +114,9 @@ class Store:
         self.db.executescript("""
           PRAGMA journal_mode=WAL;
           PRAGMA foreign_keys=ON;
+          CREATE TABLE IF NOT EXISTS topics (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+            last_provider TEXT NOT NULL DEFAULT '');
           CREATE TABLE IF NOT EXISTS meetings (
             id TEXT PRIMARY KEY, title TEXT NOT NULL, created TEXT NOT NULL, demo INTEGER DEFAULT 0,
             source TEXT DEFAULT '', source_label TEXT DEFAULT '', duration REAL DEFAULT 0,
@@ -120,8 +124,12 @@ class Store:
           CREATE TABLE IF NOT EXISTS meeting_agents (
             meeting TEXT REFERENCES meetings(id) ON DELETE CASCADE, provider TEXT NOT NULL,
             session TEXT NOT NULL, PRIMARY KEY(meeting, provider));
-          INSERT OR IGNORE INTO meeting_agents(meeting,provider,session)
-            SELECT id,agent,session FROM meetings WHERE agent<>'' AND session<>'';
+          CREATE TABLE IF NOT EXISTS topic_agents (
+            topic TEXT REFERENCES topics(id), provider TEXT NOT NULL, session TEXT NOT NULL,
+            PRIMARY KEY(topic,provider));
+          CREATE TABLE IF NOT EXISTS agent_session_scopes (
+            provider TEXT NOT NULL, session TEXT NOT NULL, scope TEXT NOT NULL,
+            PRIMARY KEY(provider,session));
           CREATE TABLE IF NOT EXISTS events (
             seq INTEGER PRIMARY KEY, meeting TEXT REFERENCES meetings(id), kind TEXT NOT NULL,
             at REAL NOT NULL, end REAL NOT NULL, speaker TEXT NOT NULL, text TEXT NOT NULL, files TEXT DEFAULT '[]');
@@ -136,8 +144,19 @@ class Store:
             meeting TEXT REFERENCES meetings(id), at INTEGER, peak REAL, PRIMARY KEY(meeting, at));
           CREATE TABLE IF NOT EXISTS media (path TEXT PRIMARY KEY);
         """)
-        if "origin" not in {r["name"] for r in self.rows("PRAGMA table_info(meetings)")}:
-            self.write("ALTER TABLE meetings ADD COLUMN origin REAL NOT NULL DEFAULT 0")
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            columns = {r["name"] for r in self.rows("PRAGMA table_info(meetings)")}
+            if "origin" not in columns:
+                self.db.execute("ALTER TABLE meetings ADD COLUMN origin REAL NOT NULL DEFAULT 0")
+            if "topic_id" not in columns:
+                self.db.execute("ALTER TABLE meetings ADD COLUMN topic_id TEXT REFERENCES topics(id)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS meetings_topic ON meetings(topic_id)")
+            self.db.execute("INSERT OR IGNORE INTO meeting_agents(meeting,provider,session) "
+                            "SELECT id,agent,session FROM meetings "
+                            "WHERE topic_id IS NULL AND agent<>'' AND session<>''")
+            self.db.execute("INSERT OR IGNORE INTO agent_session_scopes(provider,session,scope) "
+                            "SELECT provider,session,'' FROM meeting_agents")
         if not self.one("SELECT id FROM meetings LIMIT 1"):
             self.seed()
 
@@ -152,16 +171,58 @@ class Store:
         with self.lock, self.db:
             return self.db.execute(sql, args).rowcount
 
-    def create(self, title, demo=False, *, source="", source_label="", origin=0):
+    def _resolve_topic(self, topic_id, topic_name):
+        """Resolve or create a topic inside the caller's write transaction."""
+        name = unicodedata.normalize("NFC", topic_name or "").strip()
+        if topic_id:
+            if name or not self.one("SELECT id FROM topics WHERE id=?", (topic_id,)):
+                raise ValueError("请选择一个已有主题，或填写新主题名称")
+            return topic_id
+        if not name:
+            return None
+        if len(name) > 80:
+            raise ValueError("主题名称最多 80 个字符")
+        key = name.casefold()
+        self.db.execute("INSERT INTO topics(id,name,name_key) VALUES(?,?,?) "
+                        "ON CONFLICT(name_key) DO NOTHING", (uid(), name, key))
+        return self.one("SELECT id FROM topics WHERE name_key=?", (key,))["id"]
+
+    def create(self, title, demo=False, *, source="", source_label="", origin=0, topic_id="", topic_name=""):
         mid = uid()
-        self.write(
-            "INSERT INTO meetings(id,title,created,demo,source,source_label,origin,duration) "
-            "VALUES (?,?,?,?,?,?,?,?)", (mid, title, stamp(), demo, source, source_label, origin, origin)
-        )
+        with self.lock, self.db:
+            topic = self._resolve_topic(topic_id, topic_name)
+            self.db.execute(
+                "INSERT INTO meetings(id,title,created,demo,source,source_label,origin,duration,topic_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?)", (mid, title, stamp(), demo, source, source_label, origin, origin, topic)
+            )
         return mid
 
+    def set_meeting_topic(self, mid, topic_id="", topic_name=""):
+        """Archive an independent meeting into a topic; its old remote chats keep their scope."""
+        with self.lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            meeting = self.meeting(mid)
+            if not meeting or meeting["demo"]:
+                raise ValueError("请选择自己的会议")
+            topic = self._resolve_topic(topic_id, topic_name)
+            if not topic:
+                raise ValueError("请选择要归入的主题")
+            if meeting["topic_id"] == topic:
+                return
+            if meeting["topic_id"]:
+                raise ValueError("这场会议已归入其他主题")
+            self.db.execute("UPDATE meetings SET topic_id=?,agent='',session='' WHERE id=?", (topic, mid))
+
+    _MEETINGS = ("SELECT m.*,coalesce(t.name,'') AS topic_name,coalesce(t.last_provider,'') AS topic_provider "
+                 "FROM meetings m LEFT JOIN topics t ON t.id=m.topic_id ")
+
     def meeting(self, mid):
-        return self.one("SELECT * FROM meetings WHERE id=?", (mid,))
+        return self.one(self._MEETINGS + "WHERE m.id=?", (mid,))
+
+    def topics(self):
+        return self.rows("SELECT t.id,t.name,count(m.id) AS meeting_count FROM topics t "
+                         "LEFT JOIN meetings m ON m.topic_id=t.id GROUP BY t.id "
+                         "ORDER BY max(m.rowid) DESC,t.name")
 
     def latest_meeting_id(self):
         return self.one("SELECT id FROM meetings ORDER BY created DESC,rowid DESC LIMIT 1")["id"]
@@ -219,7 +280,8 @@ class Store:
             meeting = self.meeting(mid)
             events = self.events(mid, limit + 1)
             return dict(
-                meetings=self.rows("SELECT * FROM meetings ORDER BY demo ASC,created DESC,rowid DESC"),
+                meetings=self.rows(self._MEETINGS + "ORDER BY m.demo ASC,m.created DESC,m.rowid DESC"),
+                topics=self.topics(),
                 meeting=meeting, events=events[-limit:], older=len(events) > limit,
                 trackSpeech=self.rows("SELECT at,end,speaker FROM events WHERE meeting=? AND kind='speech' "
                                       "ORDER BY at,seq", (mid,)),
@@ -236,20 +298,71 @@ class Store:
                                "ORDER BY at DESC,seq DESC LIMIT 32", (mid,))
             notes = self.rows("SELECT id,kind,title,body FROM notes WHERE meeting=? "
                               "ORDER BY created DESC,rowid DESC LIMIT 40", (mid,))
-            return {"会议": meeting["title"], "示例": bool(meeting["demo"]),
-                    "近期发言": recent[::-1], "当前便签": notes}
+            context = {"会议": meeting["title"], "示例": bool(meeting["demo"]),
+                       "近期发言": recent[::-1], "当前便签": notes}
+            if meeting["topic_id"]:
+                previous = self.rows("SELECT m.id,m.title,m.created " + self._PRIOR_MEETINGS +
+                                     " ORDER BY m.rowid DESC LIMIT 5", (mid,))
+                for entry in previous:
+                    entry["发言摘录"] = self.rows(
+                        "SELECT at,speaker,substr(text,1,200) AS text FROM events "
+                        "WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 2", (entry["id"],)
+                    )[::-1]
+                    entry["便签摘录"] = self.rows(
+                        "SELECT kind,substr(title,1,100) AS title,substr(body,1,180) AS body FROM notes "
+                        "WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 2", (entry["id"],)
+                    )
+                context.update({"主题": meeting["topic_name"], "本场会议ID": mid, "往次会议": previous})
+            return context
 
-    def bind_agent(self, mid, provider, session):
+    def check_agent_session(self, mid, provider, session):
+        if not session:
+            return
+        row = self.one("SELECT scope FROM agent_session_scopes WHERE provider=? AND session=?", (provider, session))
+        if row and row["scope"] != (self.meeting(mid)["topic_id"] or ""):
+            raise ValueError("此 AI 会话已用于其他主题或独立会议，请使用本主题的会话或新建会话")
+
+    def unavailable_session_ids(self, mid, provider):
+        rows = self.rows("SELECT session FROM agent_session_scopes WHERE provider=? AND scope<>?",
+                         (provider, self.meeting(mid)["topic_id"] or ""))
+        return {row["session"] for row in rows}
+
+    def bind_agent(self, mid, provider, session, *, expected_session=None):
+        if not provider or not session:
+            raise ValueError("请选择有效的 AI 会话")
         with self.lock, self.db:
-            self.db.execute(
-                "INSERT INTO meeting_agents VALUES(?,?,?) ON CONFLICT(meeting, provider) "
-                "DO UPDATE SET session=excluded.session", (mid, provider, session)
-            )
+            self.db.execute("BEGIN IMMEDIATE")
+            meeting = self.meeting(mid)
+            if not meeting:
+                raise ValueError("会议不存在")
+            topic = meeting["topic_id"]
+            self.check_agent_session(mid, provider, session)
+            if topic and expected_session is not None:
+                current = self.agent_sessions(mid).get(provider, "")
+                if current != expected_session and current != session:
+                    raise ValueError("本主题的 AI 会话已在其他窗口更改，请重新连接")
+            self.db.execute("INSERT OR IGNORE INTO agent_session_scopes(provider,session,scope) VALUES(?,?,?)",
+                            (provider, session, topic or ""))
+            if topic:
+                self.db.execute(
+                    "INSERT INTO topic_agents VALUES(?,?,?) ON CONFLICT(topic,provider) "
+                    "DO UPDATE SET session=excluded.session", (topic, provider, session)
+                )
+                self.db.execute("UPDATE topics SET last_provider=? WHERE id=?", (provider, topic))
+            else:
+                self.db.execute(
+                    "INSERT INTO meeting_agents VALUES(?,?,?) ON CONFLICT(meeting,provider) "
+                    "DO UPDATE SET session=excluded.session", (mid, provider, session)
+                )
             self.db.execute("UPDATE meetings SET agent=?,session=? WHERE id=?", (provider, session, mid))
 
     def agent_sessions(self, mid):
-        return {r["provider"]: r["session"] for r in
-                self.rows("SELECT provider,session FROM meeting_agents WHERE meeting=?", (mid,))}
+        # Choose bindings by scope even for an old meeting subsequently filed into a topic.
+        rows = self.rows("SELECT a.provider,a.session FROM meetings m "
+                         "JOIN topic_agents a ON a.topic=m.topic_id WHERE m.id=? "
+                         "UNION ALL SELECT a.provider,a.session FROM meetings m "
+                         "JOIN meeting_agents a ON a.meeting=m.id WHERE m.id=? AND m.topic_id IS NULL", (mid, mid))
+        return {r["provider"]: r["session"] for r in rows}
 
     def events(self, mid, limit=0, before=0):
         if limit:
@@ -336,7 +449,54 @@ class Store:
     def notes(self, mid):
         return self.rows("SELECT * FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC", (mid,))
 
+    # A UUID supplied by a provider never grants access on its own. Both reads use
+    # the invoking meeting's membership and insertion order from the database.
+    _PRIOR_MEETINGS = ("FROM meetings m JOIN meetings current ON current.topic_id=m.topic_id "
+                       "WHERE current.id=? AND m.rowid<current.rowid")
+
+    def _history_page(self, fields, where, args, order, offset, limit):
+        count = self.one("SELECT count(*) AS n " + where, args)["n"]
+        rows = self.rows("SELECT " + fields + " " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
+                         (*args, limit, offset))
+        return {"total": count, "offset": offset, "items": rows}
+
+    def _topic_history(self, mid, name, args):
+        query = str(args.get("query", ""))[:500]
+        offset = max(0, int(args.get("offset", 0)))
+        limit = max(1, min(50, int(args.get("limit", 10))))
+        with self.lock:
+            if name == "list_topic_meetings":
+                where = self._PRIOR_MEETINGS
+                values = [mid]
+                if query:
+                    where += (" AND (instr(lower(m.title),lower(?))>0 OR EXISTS (SELECT 1 FROM events e "
+                              "WHERE e.meeting=m.id AND e.kind='speech' AND instr(lower(e.text),lower(?))>0) "
+                              "OR EXISTS (SELECT 1 FROM notes n WHERE n.meeting=m.id "
+                              "AND instr(lower(n.title||' '||n.body),lower(?))>0))")
+                    values.extend([query] * 3)
+                return self._history_page("m.id,m.title,m.created", where, values, "m.rowid DESC", offset, limit)
+
+            target = args.get("meeting_id", "")
+            previous = self.one("SELECT m.id,m.title,m.created " + self._PRIOR_MEETINGS + " AND m.id=?", (mid, target))
+            if not previous:
+                raise ValueError("只能读取当前主题中的往期会议")
+            kind = args.get("kind", "")
+            if kind == "notes":
+                fields = "kind,title,body,author,created"
+                where = "FROM notes WHERE meeting=? AND instr(lower(title||' '||body),lower(?))>0"
+                order = "created,rowid"
+            elif kind in ("transcript", "chat"):
+                kinds = "kind='speech'" if kind == "transcript" else "kind IN ('assistant','user')"
+                fields = "kind,at AS start,end,speaker,text"
+                where = "FROM events WHERE meeting=? AND " + kinds + " AND instr(lower(text||' '||speaker),lower(?))>0"
+                order = "at,seq"
+            else:
+                raise ValueError("请选择转写、便签或 AI 对话记录")
+            return {"meeting": previous, **self._history_page(fields, where, (target, query), order, offset, limit)}
+
     def tool(self, mid, name, args, author="AI"):
+        if name in ("list_topic_meetings", "read_topic_history"):
+            return self._topic_history(mid, name, args)
         if name == "read_transcript":
             query = str(args.get("query", ""))[:500]
             limit = max(1, min(100, int(args.get("limit", 30))))

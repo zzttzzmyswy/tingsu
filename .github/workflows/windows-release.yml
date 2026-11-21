@@ -141,6 +141,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Codex failed to start on Windows' }
 
       - name: Install test clients
+        id: test_clients
         if: matrix.suite != 'accessibility'
         run: python -m pip install websocket-client==1.8.0 pillow==11.3.0
 
@@ -164,7 +165,7 @@ jobs:
           python -u tests/e2e/native_windows_uia.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
 
       - name: Exercise the release with the system WebView2 runtime
-        if: matrix.suite != 'accessibility'
+        if: ${{ !cancelled() && steps.test_clients.outcome == 'success' }}
         shell: pwsh
         env:
           PYTHONUTF8: '1'

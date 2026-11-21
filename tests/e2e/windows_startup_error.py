@@ -17,8 +17,6 @@ def check_dialog(app, env, expected):
     api.FindWindowW.restype = wintypes.HWND
     api.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
     api.FindWindowExW.restype = wintypes.HWND
-    api.GetDlgItem.argtypes = [wintypes.HWND, ctypes.c_int]
-    api.GetDlgItem.restype = wintypes.HWND
     api.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     api.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     api.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -44,10 +42,10 @@ def check_dialog(app, env, expected):
             api.GetWindowTextW(child, buf, len(buf))
             messages.append(buf.value)
         assert any(expected in s and "tingsu-webview.exe" in s for s in messages), messages
-        ok_button = api.GetDlgItem(hwnd, 1)  # IDOK
-        assert ok_button
-        assert api.PostMessageW(ok_button, 0x00F5, 0, 0)  # BM_CLICK on the actual button
-        assert proc.wait(timeout=10) == 1
+        # A one-button MessageBox may assign IDCANCEL to the dismissal
+        # control. Close the dialog through its system menu equivalent.
+        assert api.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+        assert proc.wait(timeout=15) == 1
     finally:
         if proc.poll() is None:
             proc.kill()

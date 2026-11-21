@@ -25,7 +25,8 @@ for directory in "$prefix"/lib/tingsu/graphics-fallback/*; do
     [ -d "$directory" ] || continue
     case "$ldcache" in *"${directory##*/} (libc6,x86-64)"*) ;; *) LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$directory";; esac
 done
-export TINGSU_DESKTOP_HOST="$prefix/bin/tingsu-webview"
+export TINGSU_HELPER_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+if [ -n "${TINGSU_HOST_LD_LIBRARY_PATH:-}" ]; then export LD_LIBRARY_PATH="$TINGSU_HOST_LD_LIBRARY_PATH"; else unset LD_LIBRARY_PATH; fi
 for arg in "$@"; do
     case "$arg" in --wayland) export GDK_BACKEND=wayland;; --x11) export GDK_BACKEND=x11;; esac
 done

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+prefix=$(dirname "$(dirname "$(readlink -f "$0")")")
+export LD_LIBRARY_PATH="${TINGSU_HELPER_LD_LIBRARY_PATH:-}"
+exec "$prefix/lib/tingsu/tools/${0##*/}" "$@"

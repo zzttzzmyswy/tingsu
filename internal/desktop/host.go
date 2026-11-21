@@ -1,14 +1,9 @@
 package desktop
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -23,13 +18,14 @@ type packet struct {
 	Value any
 }
 type host struct {
+	bridge  *bridge
 	ctx     context.Context
 	cancel  context.CancelFunc
 	in      chan struct{}
 	inboxMu sync.Mutex
 	inbox   []func()
 	dirty   chan struct{}
-	out     *json.Encoder
+	deliver func(M)
 	dialogs map[int]func(any)
 	serial  int
 	closing bool
@@ -64,9 +60,7 @@ func (h *host) changed() {
 	}
 }
 func (h *host) write(p M) {
-	if err := h.out.Encode(p); err != nil {
-		h.cancel()
-	}
+	h.deliver(p)
 }
 func (h *host) signal(name string, args ...any) {
 	h.write(M{"type": "signal", "name": name, "args": args})
@@ -87,11 +81,17 @@ func Run(args []string) error {
 		switch a {
 		case "--x11", "--wayland":
 			if runtime.GOOS == "linux" {
+				if a == "--x11" {
+					// libwayland defaults to wayland-0 even when its variable is unset.
+					os.Setenv("WAYLAND_DISPLAY", "/dev/null")
+				} else if os.Getenv("WAYLAND_DISPLAY") == "" {
+					os.Setenv("WAYLAND_DISPLAY", "wayland-0")
+				}
 				os.Setenv("GDK_BACKEND", a[2:])
 				os.Setenv("TINGSU_CAPTURE_DESKTOP", a[2:])
 			}
 		case "--version":
-			fmt.Println("Tingsu 2.0.1")
+			fmt.Println("Tingsu 2.1.0")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)
@@ -112,47 +112,27 @@ func Run(args []string) error {
 	acquired := lockProfile(lock) == nil
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var b *bridge
-	name := os.Getenv("TINGSU_DESKTOP_HOST")
-	if name == "" {
-		name = "tingsu-webview"
-		if runtime.GOOS == "windows" {
-			name += ".exe"
-		}
-	}
-	base := os.Getenv("TINGSU_BUNDLE")
-	if base == "" {
-		base = "meeting_agent"
-	}
-	ui, e := filepath.Abs(filepath.Join(base, "ui", "index.html"))
-	if e != nil {
-		return e
-	}
-	if _, e = os.Stat(ui); e != nil {
-		return e
-	}
-	c := exec.Command(name, ui)
-	c.Stderr = os.Stderr
-	read, e := c.StdoutPipe()
-	if e != nil {
-		return e
-	}
-	write, e := c.StdinPipe()
-	if e != nil {
-		return e
-	}
-	h := &host{ctx: ctx, cancel: cancel, in: make(chan struct{}, 1), dirty: make(chan struct{}, 1), out: json.NewEncoder(write), dialogs: map[int]func(any){}}
+	h := &host{ctx: ctx, cancel: cancel, in: make(chan struct{}, 1), dirty: make(chan struct{}, 1), dialogs: map[int]func(any){}}
+	ui := newWorkbench(func(p packet) { h.post(func() { h.dispatch(p) }) })
+	h.deliver = ui.receive
 	if acquired {
-		if b, e = newBridge(h, data); e != nil {
+		h.bridge, e = newBridge(h, data)
+		if e != nil {
 			return e
 		}
-		defer b.close()
+		defer h.bridge.close()
 	}
-	if e = c.Start(); e != nil {
-		return fmt.Errorf("无法启动界面组件 %s: %w", name, e)
-	}
-	input := make(chan packet, 16)
-	go readPackets(ctx, read, input)
+	// Background callbacks and commands run on a single owner goroutine.
+	done := make(chan struct{})
+	go func() { defer close(done); h.serve() }()
+	err := ui.run()
+	cancel()
+	<-done
+	return err
+}
+
+func (h *host) serve() {
+	ctx, b := h.ctx, h.bridge
 	tick := time.NewTicker(350 * time.Millisecond)
 	defer tick.Stop()
 	var refresh <-chan time.Time
@@ -176,75 +156,46 @@ func Run(args []string) error {
 					b.event("position", fmt.Sprint(t))
 				}
 			}
-		case p, ok := <-input:
-			if !ok {
-				cancel()
-				break
-			}
-			switch p.Type {
-			case "ready":
-				if b == nil {
-					h.dialog("message", "听序", M{"message": "同一个本地工作空间已经打开。"}, func(any) { h.quit() })
-				} else {
-					b.ready = true
-					b.publish()
-					b.loadSources()
-					b.loadLibrary()
-				}
-			case "dialog-result":
-				if fn := h.dialogs[p.ID]; fn != nil {
-					delete(h.dialogs, p.ID)
-					fn(p.Value)
-				}
-			case "command":
-				if b != nil {
-					if err := b.command(p.Name, p.Args); err != nil {
-						b.fail(err)
-					}
-				}
-			case "close-request":
-				if b != nil && b.active() {
-					if !h.closing {
-						h.closing = true
-						h.dialog("confirm", "退出听序", M{"message": "退出会结束当前采集和 AI 回复。是否退出？"}, func(v any) {
-							h.closing = false
-							if v == true {
-								h.quit()
-							}
-						})
-					}
-				} else {
-					h.quit()
-				}
-			}
 		}
 	}
-	write.Close()
-	done := make(chan error, 1)
-	go func() { done <- c.Wait() }()
-	select {
-	case err := <-done:
-		if err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-	case <-time.After(10 * time.Second):
-		c.Process.Kill()
-		<-done
-	}
-	return nil
 }
-func readPackets(ctx context.Context, r io.Reader, sink chan<- packet) {
-	defer close(sink)
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 16384), 16<<20)
-	for s.Scan() {
-		var p packet
-		if json.Unmarshal(s.Bytes(), &p) == nil {
-			select {
-			case sink <- p:
-			case <-ctx.Done():
-				return
+
+func (h *host) dispatch(p packet) {
+	b := h.bridge
+	switch p.Type {
+	case "ready":
+		if b == nil {
+			h.dialog("message", "听序", M{"message": "同一个本地工作空间已经打开。"}, func(any) { h.quit() })
+		} else {
+			b.ready = true
+			b.publish()
+			b.loadSources()
+
+		}
+	case "dialog-result":
+		if fn := h.dialogs[p.ID]; fn != nil {
+			delete(h.dialogs, p.ID)
+			fn(p.Value)
+		}
+	case "command":
+		if b != nil {
+			if err := b.command(p.Name, p.Args); err != nil {
+				b.fail(err)
 			}
+		}
+	case "close-request":
+		if b != nil && b.active() {
+			if !h.closing {
+				h.closing = true
+				h.dialog("confirm", "退出听序", M{"message": "退出会结束当前采集和 AI 回复。是否退出？"}, func(v any) {
+					h.closing = false
+					if v == true {
+						h.quit()
+					}
+				})
+			}
+		} else {
+			h.quit()
 		}
 	}
 }

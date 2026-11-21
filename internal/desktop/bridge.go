@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,9 +21,9 @@ import (
 // Desktop state and native dialog callbacks are owned by the host event loop.
 // Workers post results to that loop; frame requests use an immutable snapshot.
 type frameRequest struct {
-	meeting, video string
-	live           *screen.Session
-	version        int
+	meeting string
+	live    *screen.Session
+	version int
 }
 type bridge struct {
 	*host
@@ -36,8 +35,6 @@ type bridge struct {
 	asr                                 *transcription.Service
 	turns                               *agent.Scheduler
 	sources                             []media.Source
-	library                             []M
-	scanning, rescan                    bool
 	files                               []string
 	client                              *agent.Client
 	provider, session, status, loginURL string
@@ -61,7 +58,7 @@ func newBridge(h *host, data string) (*bridge, error) {
 	if e != nil {
 		return nil, e
 	}
-	b := &bridge{host: h, db: db, data: data, settings: config, mid: str(config.values["selected"]), limit: 120, status: "offline", catalogs: M{}, sessions: []M{}, library: []M{}}
+	b := &bridge{host: h, db: db, data: data, settings: config, mid: str(config.values["selected"]), limit: 120, status: "offline", catalogs: M{}, sessions: []M{}}
 	if db.Meeting(b.mid) == nil {
 		b.mid = db.LatestMeetingID()
 	}
@@ -156,7 +153,7 @@ func (b *bridge) publish() {
 	}
 	sending, queued := b.turns.State()
 	for k, v := range (M{"loginLink": b.loginURL != "", "fileSource": filepath.IsAbs(str(b.current()["source"])), "settings": b.settings.public(), "providers": providers, "agentCatalogs": b.catalogs,
-		"sources": sources, "media": b.library, "libraryBusy": b.scanning, "capture": b.asr.Status(), "agent": b.status, "agentName": b.provider,
+		"sources": sources, "capture": b.asr.Status(), "agent": b.status, "agentName": b.provider,
 		"agentWorkspace": workspace, "session": b.session, "sessions": b.sessions, "sending": sending, "queued": queued, "files": files, "frame": b.preview,
 		"screen": b.live != nil, "xwayland": screen.Desktop() == "wayland" && os.Getenv("DISPLAY") != "", "windowsDesktop": runtime.GOOS == "windows"}) {
 		state[k] = v
@@ -175,77 +172,11 @@ func (b *bridge) loadSources() {
 		})
 	}()
 }
-func (b *bridge) loadLibrary() {
-	if b.scanning {
-		b.rescan = true
-		return
-	}
-	b.scanning = true
-	b.changed()
-	go func() {
-		paths := b.db.MediaPaths()
-		base := os.Getenv("TINGSU_APP_DIR")
-		if base == "" {
-			base, _ = os.Getwd()
-		}
-		dir := filepath.Join(base, "videos")
-		entries, _ := os.ReadDir(dir)
-		for _, f := range entries {
-			if !f.IsDir() && media.Supported(f.Name()) {
-				paths = append(paths, filepath.Join(dir, f.Name()))
-			}
-		}
-		slices.Sort(paths)
-		paths = slices.Compact(paths)
-		out := []M{}
-		failed := []string{}
-		for _, p := range paths {
-			if b.ctx.Err() != nil {
-				return
-			}
-			if s, e := os.Stat(p); e == nil && s.Mode().IsRegular() {
-				row, e := media.Describe(b.ctx, p, appDir("cache"))
-				if e != nil {
-					failed = append(failed, filepath.Base(p))
-				} else {
-					out = append(out, row)
-				}
-			}
-		}
-		b.post(func() {
-			b.library = out
-			b.scanning = false
-			b.setFrameRequest()
-			b.changed()
-			if len(failed) > 0 {
-				b.notice("无法读取媒体信息："+strings.Join(failed, "、"), "error")
-			}
-			if b.rescan {
-				b.rescan = false
-				b.loadLibrary()
-			}
-		})
-	}()
-}
-func (b *bridge) findMedia(p string) M {
-	for _, m := range b.library {
-		if str(m["path"]) == p {
-			return m
-		}
-	}
-	return nil
-}
 func (b *bridge) source(id string) (media.Source, error) {
 	for _, s := range b.sources {
 		if sourceKey(s) == id {
 			return s, nil
 		}
-	}
-	if filepath.IsAbs(id) && (b.findMedia(id) != nil || str(b.current()["source"]) == id) {
-		if f, e := os.Stat(id); e == nil && f.Mode().IsRegular() {
-			return media.Source{ID: id, Label: filepath.Base(id), Kind: "file"}, nil
-		}
-		return media.Source{}, errors.New("找不到录屏文件，请确认原文件路径。")
 	}
 	return media.Source{}, errors.New("请选择可用的采集来源，或刷新音频设备。")
 }
@@ -290,9 +221,6 @@ func (b *bridge) start() error {
 		return errors.New("采集源已变化，请重新选择")
 	}
 	at := number(m["duration"])
-	if item := b.findMedia(s.ID); item != nil && number(item["duration"])-at <= 0.05 {
-		return errors.New("已到达录屏末尾。")
-	}
 	return b.asr.Record(b.mid, s, b.asrConfig(), number(b.settings.values["chunk"]), at)
 }
 func (b *bridge) export(target string, m M) error {
@@ -301,7 +229,11 @@ func (b *bridge) export(target string, m M) error {
 	mid := str(m["id"])
 	for _, e := range b.db.Events(mid, 0, 0) {
 		t := int(number(e["at"]))
-		fmt.Fprintf(&out, "**%02d:%02d:%02d · %s**\n\n%s\n\n", t/3600, t/60%60, t%60, e["speaker"], e["text"])
+		stamp := "未标时"
+		if truth(e["timed"]) {
+			stamp = fmt.Sprintf("%02d:%02d:%02d", t/3600, t/60%60, t%60)
+		}
+		fmt.Fprintf(&out, "**%s · %s**\n\n%s\n\n", stamp, e["speaker"], e["text"])
 		if f := str(e["files"]); f != "" && f != "[]" {
 			fmt.Fprintf(&out, "附件：%s\n\n", f)
 		}
@@ -318,11 +250,7 @@ func (b *bridge) setFrameRequest() {
 		b.frameRequest.Store(nil)
 		return
 	}
-	src := str(b.current()["source"])
-	if !truth(b.findMedia(src)["width"]) {
-		src = ""
-	}
-	b.frameRequest.Store(&frameRequest{b.mid, src, b.live, b.screenVersion})
+	b.frameRequest.Store(&frameRequest{b.mid, b.live, b.screenVersion})
 }
 func (b *bridge) turnFrame(mid string, at float64) string {
 	r := b.frameRequest.Load()
@@ -331,20 +259,12 @@ func (b *bridge) turnFrame(mid string, at float64) string {
 	}
 	ctx, cancel := context.WithTimeout(b.ctx, 14*time.Second)
 	defer cancel()
-	var path string
-	var err error
-	if r.live != nil {
-		path, err = r.live.Snapshot(ctx)
-	} else if r.video != "" {
-		path, err = screen.FileFrame(ctx, r.video, at, filepath.Join(b.data, "frames", mid))
-	} else {
+	if r.live == nil {
 		return ""
 	}
+	path, err := r.live.Snapshot(ctx)
 	if err != nil || b.frameRequest.Load() != r {
 		return ""
-	}
-	if r.live == nil {
-		b.gotFrame(r.version, path)
 	}
 	return path
 }

@@ -12,7 +12,6 @@ docker run --rm -v "$work:/work" -v "$cache:/assets:ro" -v "$build_dir:/build:ro
   /build/build-media.sh /assets
   /desktop/portal/build.sh /work/tingsu-portal
   LD_LIBRARY_PATH=/opt/tingsu-media/lib python3 /build/assemble.py /work/AppDir /work/tingsu-portal
-  /desktop/linux/build.sh /work/AppDir/usr/bin/tingsu-webview-bin
   chown -R "$BUILD_UID:$BUILD_GID" /work
 '
 "$build_dir/finish.sh" "$work/AppDir" "$cache"

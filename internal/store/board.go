@@ -193,8 +193,8 @@ func applyTool(q *query, mid, name string, args Row, author string) (any, error)
 			if args["kind"] == "chat" {
 				k = "kind IN ('assistant','user')"
 			}
-			fields = "kind,at AS start,end,speaker,text"
-			w = " FROM events WHERE meeting=? AND " + k + " AND instr(lower(text||' '||speaker),lower(?))>0"
+			fields = "kind,CASE WHEN timed THEN at END AS start,CASE WHEN timed THEN end END AS end,speaker,text"
+			w = " FROM annotated_events WHERE meeting=? AND " + k + " AND instr(lower(text||' '||speaker),lower(?))>0"
 			order = "at,seq"
 		default:
 			return nil, errors.New("请选择转写、便签或 AI 对话记录")
@@ -203,7 +203,7 @@ func applyTool(q *query, mid, name string, args Row, author string) (any, error)
 		p["meeting"] = m
 		return p, nil
 	case "read_transcript":
-		return q.rows("SELECT at AS start,end,speaker,text FROM events WHERE meeting=? AND kind='speech' AND instr(lower(text||speaker),lower(?))>0 ORDER BY at,seq LIMIT ? OFFSET ?", mid, needle, limit(30, 100), offset), nil
+		return q.rows("SELECT CASE WHEN timed THEN at END AS start,CASE WHEN timed THEN end END AS end,speaker,text FROM annotated_events WHERE meeting=? AND kind='speech' AND instr(lower(text||speaker),lower(?))>0 ORDER BY at,seq LIMIT ? OFFSET ?", mid, needle, limit(30, 100), offset), nil
 	case "list_notes":
 		return notes(q, mid), nil
 	case "delete_note":
@@ -236,13 +236,13 @@ func (s *Store) AgentContext(mid string) Row {
 	var ctx Row
 	_ = s.tx(func(q *query) error {
 		m := meeting(q, mid)
-		recent := q.rows("SELECT at,speaker,text FROM events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 32", mid)
+		recent := q.rows("SELECT CASE WHEN timed THEN at END AS at,speaker,text FROM annotated_events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 32", mid)
 		slices.Reverse(recent)
 		ctx = Row{"会议": m["title"], "示例": integer(m["demo"], 0) != 0, "近期发言": recent, "当前便签": q.rows("SELECT id,kind,title,body FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 40", mid)}
 		if m["topic_id"] != nil {
 			history := q.rows("SELECT m.id,m.title,m.created "+priorMeetings+" ORDER BY m.rowid DESC LIMIT 5", mid)
 			for _, p := range history {
-				rs := q.rows("SELECT at,speaker,substr(text,1,200) AS text FROM events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 2", p["id"])
+				rs := q.rows("SELECT CASE WHEN timed THEN at END AS at,speaker,substr(text,1,200) AS text FROM annotated_events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 2", p["id"])
 				slices.Reverse(rs)
 				p["发言摘录"] = rs
 				p["便签摘录"] = q.rows("SELECT kind,substr(title,1,100) AS title,substr(body,1,180) AS body FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 2", p["id"])

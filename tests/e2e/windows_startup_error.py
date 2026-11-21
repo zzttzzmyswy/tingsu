@@ -1,4 +1,4 @@
-"""Verify native diagnostics when a packaged Windows UI component goes missing or changes."""
+"""Verify native diagnostics when a packaged Windows capture component goes missing or changes."""
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -41,7 +41,7 @@ def check_dialog(app, env, expected):
             buf = ctypes.create_unicode_buffer(4096)
             api.GetWindowTextW(child, buf, len(buf))
             messages.append(buf.value)
-        assert any(expected in s and "tingsu-webview.exe" in s for s in messages), messages
+        assert any(expected in s and "tingsu-capture.exe" in s for s in messages), messages
         # A one-button MessageBox may assign IDCANCEL to the dismissal
         # control. Close the dialog through its system menu equivalent.
         assert api.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
@@ -57,11 +57,11 @@ def main():
     parser.add_argument("--app", required=True, type=Path)
     app = parser.parse_args().app.resolve()
     with zipfile.ZipFile(app) as archive:
-        expected = hashlib.sha256(archive.read("bin/tingsu-webview.exe")).hexdigest()
+        expected = hashlib.sha256(archive.read("bin/tingsu-capture.exe")).hexdigest()
     with tempfile.TemporaryDirectory() as tmp:
         env = dict(os.environ, LOCALAPPDATA=tmp)
         subprocess.run([app, "--version"], env=env, timeout=30, check=True)
-        (component,) = Path(tmp).glob("Tingsu/runtime/*/bin/tingsu-webview.exe")
+        (component,) = Path(tmp).glob("Tingsu/runtime/*/bin/tingsu-capture.exe")
         for replacement in (None, b"modified test fixture"):
             if replacement is None:
                 component.unlink()
@@ -72,7 +72,7 @@ def main():
                 assert not component.exists()
             else:
                 assert component.read_bytes() == replacement
-    print("Missing and changed UI components both produced native diagnostics.")
+    print("Missing and changed capture components both produced native diagnostics.")
 
 
 if __name__ == "__main__":

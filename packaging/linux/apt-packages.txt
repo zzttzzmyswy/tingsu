@@ -16,9 +16,13 @@ patchelf
 file
 g++
 pkg-config
-libgtk-3-dev
-libwebkit2gtk-4.0-dev
-libjson-glib-dev
+libwayland-dev
+libxkbcommon-x11-dev
+libx11-xcb-dev
+libxcursor-dev
+libgles2-mesa-dev
+libegl1-mesa-dev
+libffi-dev
 libgstreamer-plugins-base1.0-dev
 libxcb-shm0-dev
 libxcb-xfixes0-dev

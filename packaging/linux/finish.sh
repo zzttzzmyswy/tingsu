@@ -7,15 +7,11 @@ appdir=$(readlink -f "$1")
 cache=$2
 destination=${TINGSU_DIST_DIR:-"$project/dist"}
 cd "$project"
-mkdir -p "$appdir/usr/share/tingsu/ui" "$destination"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$appdir/usr/bin/tingsu" ./cmd/tingsu
+mkdir -p "$appdir/usr/bin" "$destination"
+"$build_dir/build-gui.sh" "$appdir/usr/bin/tingsu"
 install -m 755 "$build_dir/AppRun" "$appdir/AppRun"
 install -m 644 "$build_dir/tingsu.desktop" "$appdir/tingsu.desktop"
-test -x "$appdir/usr/bin/tingsu-webview-bin"
 test -x "$appdir/usr/bin/tingsu-portal"
-install -m 755 "$build_dir/launch-webview" "$appdir/usr/bin/tingsu-webview"
-install -m 644 "$project"/meeting_agent/ui/*.js "$project"/meeting_agent/ui/*.html \
-    "$project"/meeting_agent/ui/*.css "$project"/meeting_agent/ui/*.svg "$appdir/usr/share/tingsu/ui/"
 install -m 644 "$project/meeting_agent/ui/tingsu.svg" "$appdir/tingsu.svg"
 rsvg-convert -w 128 -h 128 "$appdir/tingsu.svg" > "$appdir/.DirIcon"
 licenses="$appdir/usr/share/doc/tingsu/third-party"
@@ -24,6 +20,19 @@ install -m 644 "$project/LICENSE" "$project/THIRD_PARTY.md" "$appdir/usr/share/d
 install -m 644 "$build_dir/THIRD-PARTY.md" "$licenses/"
 install -m 644 "$cache/runtime-LICENSE" "$licenses/"
 "$build_dir/install-pw-client.sh" "$appdir" "$cache"
+install -m 644 "$project/internal/desktop/fonts/OFL.txt" "$licenses/ui-font.txt"
+# Keep the Go renderer on the desktop graphics stack. Only helper processes
+# should load the packaged multimedia libraries.
+mkdir -p "$appdir/usr/lib/tingsu/tools"
+for tool in ffmpeg ffprobe xwininfo tingsu-portal pactl parec arecord pw-record pw-dump; do
+    case "$tool" in
+      pw-record|pw-dump) continue ;; # Their launchers select a private PipeWire ABI.
+    esac
+    if ! cmp -s "$appdir/usr/bin/$tool" "$build_dir/launch-media"; then
+        mv "$appdir/usr/bin/$tool" "$appdir/usr/lib/tingsu/tools/$tool"
+    fi
+    install -m 755 "$build_dir/launch-media" "$appdir/usr/bin/$tool"
+done
 if find "$appdir" \( -iname 'libpython*.so*' -o -type f -name 'python3.[0-9]*' -o -name '*.py' -o -name '*.pyc' \) -print | grep -q .; then
   echo "Python runtime found in AppDir" >&2
   exit 1

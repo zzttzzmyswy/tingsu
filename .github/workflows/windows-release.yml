@@ -75,11 +75,7 @@ jobs:
 
   windows:
     needs: fetch
-    name: Windows / ${{ matrix.suite }}
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: ${{ fromJSON(inputs.suite == 'go-source' && '["go-source"]' || '["workspace","board","codex","go-source","accessibility","transcription"]') }}
+    name: Windows / native Go desktop
     permissions:
       contents: read
     runs-on: windows-latest
@@ -103,55 +99,10 @@ jobs:
           $exe = Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe'
           if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $env:EXPECTED_SHA256) { throw 'Transferred executable checksum mismatch' }
 
-      - name: Check the system WebView2 runtime and install it when missing
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Get-WebViewVersion {
-            $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-            foreach ($key in @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKCU:\Software\$client")) {
-              $pv = Get-ItemPropertyValue -LiteralPath $key -Name pv -ErrorAction SilentlyContinue
-              if ($pv -and [version]$pv -gt [version]'0.0.0.0') { return $pv }
-            }
-          }
-          $version = Get-WebViewVersion
-          if (-not $version) {
-            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
-            curl.exe --fail --silent --show-error --location --retry 3 --output $installer 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
-            if ($LASTEXITCODE -ne 0) { throw 'WebView2 download failed' }
-            $signature = Get-AuthenticodeSignature -FilePath $installer
-            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation,') { throw 'Unexpected WebView2 installer signature' }
-            $setup = Start-Process $installer -ArgumentList '/silent','/install' -Wait -PassThru
-            $version = Get-WebViewVersion
-            if (-not $version) { throw "WebView2 is missing after setup (exit $($setup.ExitCode))" }
-          }
-          Write-Host "System WebView2 version $version"
-
-      - name: Install the official external Codex CLI for this test
-        if: matrix.suite == 'codex'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $zip = Join-Path $env:RUNNER_TEMP 'codex.zip'
-          curl.exe --fail --silent --show-error --location --retry 3 --output $zip https://github.com/openai/codex/releases/download/rust-v0.171.0/codex-x86_64-pc-windows-msvc.exe.zip
-          if ($LASTEXITCODE -ne 0) { throw 'Codex download failed' }
-          if ((Get-FileHash $zip).Hash -ne '3db356dcd1efdd946741fa7c543d772522777332a996322d325918d04ca01820') { throw 'Codex archive checksum mismatch' }
-          $agent = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'System agents')
-          Expand-Archive $zip -DestinationPath $agent
-          $binary = @(Get-ChildItem $agent -Recurse -File -Include codex.exe,codex-x86_64-pc-windows-msvc.exe)
-          if ($binary.Count -ne 1 -or (Get-FileHash $binary[0].FullName).Hash -ne 'cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7') { throw 'Codex executable checksum mismatch' }
-          $path = Join-Path $agent 'codex.exe'
-          if ($binary[0].FullName -ne $path) { Move-Item -LiteralPath $binary[0].FullName -Destination $path }
-          & $path --version
-          if ($LASTEXITCODE -ne 0) { throw 'Codex failed to start on Windows' }
-
-      - name: Install test clients
-        id: test_clients
-        if: contains(fromJSON('["workspace","board","codex","transcription"]'), matrix.suite)
-        run: python -m pip install websocket-client==1.8.0 pillow==11.3.0
-
-      - name: Extract and verify the candidate's media helpers
-        if: matrix.suite == 'go-source'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Extract release media helpers and run Go suites
         shell: pwsh
         run: |
           $app = Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe'
@@ -159,61 +110,14 @@ jobs:
           python -m zipfile -e $app $media
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $bin = Join-Path $media bin
-          & (Join-Path $bin ffmpeg.exe) -hide_banner -version
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & (Join-Path $bin ffprobe.exe) -hide_banner -version
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $bin >> $env:GITHUB_PATH
-
-      - name: Capture a real Windows test window and check process audio when an endpoint is available
-        if: matrix.suite == 'go-source'
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
-          cl /nologo /std:c++17 /EHsc /O2 /MT tests/windows/acceptance.cpp /Fe:window-test.exe /link winmm.lib user32.lib gdi32.lib
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $helper = (Get-Command tingsu-capture.exe).Source
-          ./window-test.exe $helper --window-only
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Start-Service Audiosrv -ErrorAction SilentlyContinue
-          $sources = & $helper audio-sources
-          if ($sources -match 'win-monitor') {
-            ./window-test.exe $helper --audio-only
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          } else { Write-Host 'Runner has no playback endpoint for the WASAPI hardware test.' }
-
-      - uses: actions/setup-go@v5
-        if: matrix.suite == 'go-source'
-        with:
-          go-version-file: go.mod
-      - name: Run the Go backend tests on Windows
-        if: matrix.suite == 'go-source'
-        shell: pwsh
-        env:
-          PYTHONUTF8: '1'
-        run: |
+          $env:PATH = "$bin;$env:PATH"
           go test ./...
-
-      - name: Check native startup diagnostics with a missing or changed component
-        if: matrix.suite == 'accessibility'
+      - name: Test missing and altered capture components
         shell: pwsh
         run: python -u tests/e2e/windows_startup_error.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
-
-      - name: Create and reopen a meeting with Windows UI Automation
-        if: matrix.suite == 'accessibility'
+      - name: Create a meeting, edit notes, import a transcript and reopen the release
         shell: pwsh
-        env:
-          PYTHONUTF8: '1'
         run: |
-          python -u tests/e2e/native_windows_uia.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
-
-      - name: Exercise the release with the system WebView2 runtime
-        if: steps.test_clients.outcome == 'success'
-        shell: pwsh
-        env:
-          PYTHONUTF8: '1'
-          TINGSU_TEST_DEFAULT_WINDOWS_PROFILE: ${{ matrix.suite == 'codex' && '1' || '0' }}
-        run: |
-          python -u tests/e2e/native_windows_codex.py --suite ${{ matrix.suite }} --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') --codex (Join-Path $env:RUNNER_TEMP 'System agents/codex.exe')
+          go build -o nativeui.exe ./tests/windows/nativeui
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./nativeui.exe -app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') -out (Join-Path $env:RUNNER_TEMP 'Native UI tests')

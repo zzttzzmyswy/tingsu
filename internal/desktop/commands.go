@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/zzttzzmyswy/tingsu/internal/screen"
-	"math"
+	"github.com/zzttzzmyswy/tingsu/internal/transcript"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -18,15 +18,41 @@ func (b *bridge) command(name string, a M) error {
 	switch name {
 	case "sources":
 		b.loadSources()
-	case "import_media":
-		b.dialog("open-files", "添加会议录屏或音频", M{}, func(v any) {
-			if files := stringsOf(v); len(files) > 0 {
-				if e := b.db.AddMedia(files); e != nil {
-					b.fail(e)
-					return
-				}
-				b.loadLibrary()
+	case "import_transcript":
+		if e := b.canSwitch(); e != nil {
+			return e
+		}
+		b.dialog("open-files", "导入会议逐字稿", M{"filter": "*.txt;*.srt;*.vtt"}, func(v any) {
+			paths := stringsOf(v)
+			if len(paths) == 0 {
+				return
 			}
+			go func() {
+				docs := make([]transcript.Document, 0, len(paths))
+				for _, path := range paths {
+					d, err := transcript.Read(path)
+					if err != nil {
+						b.post(func() { b.fail(fmt.Errorf("%s: %w", filepath.Base(path), err)) })
+						return
+					}
+					docs = append(docs, d)
+				}
+				b.post(func() {
+					if e := b.canSwitch(); e != nil {
+						b.fail(e)
+						return
+					}
+					mid, e := b.db.ImportTranscripts(docs)
+					if e == nil {
+						e = b.change(mid)
+					}
+					if e != nil {
+						b.fail(e)
+						return
+					}
+					b.notice(fmt.Sprintf("已导入 %d 份逐字稿", len(docs)), "ok")
+				})
+			}()
 		})
 	case "settings":
 		return b.saveSettings(a)
@@ -51,11 +77,7 @@ func (b *bridge) command(name string, a M) error {
 			}
 			label = s.Label
 		}
-		offset := number(a["offset"])
-		if offset < 0 || math.IsNaN(offset) || math.IsInf(offset, 0) || (offset > 0 && offset >= number(b.findMedia(id)["duration"])) {
-			return errors.New("录屏起点必须在媒体时长之内")
-		}
-		mid, e := b.db.Create(title, id, label, offset, str(a["topic_id"]), str(a["topic_name"]))
+		mid, e := b.db.Create(title, id, label, 0, str(a["topic_id"]), str(a["topic_name"]))
 		if e != nil {
 			return e
 		}
@@ -96,8 +118,8 @@ func (b *bridge) command(name string, a M) error {
 		}
 		m := b.current()
 		origin, end := number(m["origin"]), number(m["duration"])
-		if truth(m["demo"]) || (end > origin && (filepath.IsAbs(str(m["source"])) || s.Kind == "file")) {
-			return errors.New("已有录音的会议不能更换录屏文件。请新建会议选择文件。")
+		if truth(m["demo"]) {
+			return errors.New("请新建会议后选择实时音频来源。")
 		}
 		if sourceKey(s) != str(m["source"]) && end <= origin {
 			origin, end = 0, 0
@@ -211,27 +233,6 @@ func (b *bridge) command(name string, a M) error {
 							b.fail(e)
 						}
 					})
-				}
-			}()
-			return nil
-		}
-		src := str(b.current()["source"])
-		if name == "snapshot" && filepath.IsAbs(src) {
-			v, mid := b.screenVersion, b.mid
-			t, ok := b.asr.Position()
-			if !ok {
-				t = number(b.current()["duration"])
-			}
-			go func() {
-				p, e := screen.FileFrame(b.ctx, src, t, filepath.Join(b.data, "frames", mid))
-				if e != nil {
-					b.post(func() {
-						if b.screenVersion == v {
-							b.fail(e)
-						}
-					})
-				} else {
-					b.gotFrame(v, p)
 				}
 			}()
 			return nil

@@ -14,7 +14,7 @@ import (
 func TestVerifyCachedComponents(t *testing.T) {
 	var data bytes.Buffer
 	w := zip.NewWriter(&data)
-	for _, name := range []string{"tingsu-webview.exe", "WebView2Loader.dll", "tingsu-host.exe", "tingsu-capture.exe"} {
+	for _, name := range []string{"tingsu-host.exe", "tingsu-capture.exe"} {
 		entry, err := w.Create("bin/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -38,7 +38,7 @@ func TestVerifyCachedComponents(t *testing.T) {
 	if err := verifyComponents(archive, dir); err != nil {
 		t.Fatal(err)
 	}
-	name := "tingsu-webview.exe"
+	name := "tingsu-capture.exe"
 	path := filepath.Join(dir, "bin", name)
 	for _, replacement := range [][]byte{nil, {}, []byte("not the original!")} {
 		if replacement == nil {

@@ -1,18 +1,11 @@
 #!/bin/sh
-# Launch the Go backend and the native Linux WebKit host from a source checkout.
 set -eu
 project=$(dirname "$(readlink -f "$0")")
 cd "$project"
-export TINGSU_BUNDLE="$project/meeting_agent"
-export TINGSU_DESKTOP_HOST="${TINGSU_DESKTOP_HOST:-$project/build/tingsu-webview}"
-export TINGSU_APP_DIR="${TINGSU_APP_DIR:-$project}"
+mkdir -p build
 export PATH="$project/build:$PATH"
-if [ ! -x "$TINGSU_DESKTOP_HOST" ]; then
-    mkdir -p "$project/build"
-    "$project/desktop/linux/build.sh" "$TINGSU_DESKTOP_HOST"
+if [ ! -x build/tingsu-portal ] || [ desktop/portal/main.c -nt build/tingsu-portal ]; then
+    desktop/portal/build.sh build/tingsu-portal
 fi
-if [ ! -x "$project/build/tingsu-portal" ]; then
-    "$project/desktop/portal/build.sh" "$project/build/tingsu-portal"
-fi
-go build -trimpath -o "$project/build/tingsu" ./cmd/tingsu
-exec "$project/build/tingsu" "$@"
+go build -tags novulkan -trimpath -o build/tingsu ./cmd/tingsu
+exec build/tingsu "$@"

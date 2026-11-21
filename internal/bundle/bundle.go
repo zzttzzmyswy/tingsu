@@ -85,9 +85,6 @@ func Prepare() error {
 		os.Setenv("TINGSU_APP_DIR", filepath.Dir(exe))
 	}
 	os.Setenv("TINGSU_BUNDLE", dir)
-	if os.Getenv("TINGSU_DESKTOP_HOST") == "" {
-		os.Setenv("TINGSU_DESKTOP_HOST", filepath.Join(dir, "bin", "tingsu-webview.exe"))
-	}
 	os.Setenv("TINGSU_HOST_PATH", os.Getenv("PATH"))
 	os.Setenv("TINGSU_HOST_VARIABLES", "PATH")
 	return os.Setenv("PATH", filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -97,7 +94,7 @@ func Prepare() error {
 // reusing an existing cache. The separately replaceable FFmpeg libraries are
 // intentionally outside this list.
 func verifyComponents(archive *zip.Reader, dir string) error {
-	for _, name := range []string{"bin/tingsu-webview.exe", "bin/WebView2Loader.dll", "bin/tingsu-host.exe", "bin/tingsu-capture.exe"} {
+	for _, name := range []string{"bin/tingsu-host.exe", "bin/tingsu-capture.exe"} {
 		src, err := archive.Open(name)
 		if err != nil {
 			return fmt.Errorf("发行包缺少组件 %s: %w", name, err)

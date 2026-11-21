@@ -43,3 +43,9 @@ CREATE INDEX IF NOT EXISTS meetings_topic ON meetings(topic_id);
 CREATE TABLE IF NOT EXISTS openai_sessions(account TEXT,id TEXT,title TEXT,PRIMARY KEY(account,id));
 CREATE TABLE IF NOT EXISTS openai_pending(account TEXT,id TEXT,outputs TEXT,PRIMARY KEY(account,id));
 CREATE INDEX IF NOT EXISTS jobs_meeting_time ON jobs(meeting,start,path);
+
+CREATE TABLE IF NOT EXISTS untimed_transcript_events (
+  seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE
+);
+CREATE VIEW IF NOT EXISTS annotated_events AS
+  SELECT e.*, (u.seq IS NULL) AS timed FROM events e LEFT JOIN untimed_transcript_events u ON u.seq=e.seq;

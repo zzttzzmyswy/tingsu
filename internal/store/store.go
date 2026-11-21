@@ -287,9 +287,9 @@ func (s *Store) MediaPaths() []string {
 
 func events(q *query, mid string, limit, before int) []Row {
 	if limit <= 0 {
-		return q.rows("SELECT * FROM events WHERE meeting=? ORDER BY at,seq", mid)
+		return q.rows("SELECT * FROM annotated_events WHERE meeting=? ORDER BY at,seq", mid)
 	}
-	r := q.rows("SELECT * FROM events WHERE meeting=? AND (?=0 OR seq<?) ORDER BY at DESC,seq DESC LIMIT ?", mid, before, before, limit)
+	r := q.rows("SELECT * FROM annotated_events WHERE meeting=? AND (?=0 OR seq<?) ORDER BY at DESC,seq DESC LIMIT ?", mid, before, before, limit)
 	slices.Reverse(r)
 	return r
 }

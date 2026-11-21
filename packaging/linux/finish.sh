@@ -27,7 +27,8 @@ install -m 644 "$cache/runtime-LICENSE" "$licenses/"
 "$build_dir/install-pw-client.sh" "$appdir" "$cache"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-mksquashfs "$appdir" "$work/payload" -noappend -all-root -no-progress -comp zstd -Xcompression-level 19 -b 1M -processors 8
+mksquashfs "$appdir" "$work/payload" -noappend -all-root -no-progress -comp zstd -Xcompression-level 19 -b 1M -processors 8 \
+    -e usr/lib/tingsu/codex usr/share/doc/tingsu/third-party/codex-LICENSE usr/share/doc/tingsu/third-party/codex-NOTICE
 image="$destination/Tingsu-Linux-x86_64.AppImage"
 temporary=$(mktemp "$destination/.tingsu-appimage.XXXXXX")
 cat "$cache/runtime" "$work/payload" > "$temporary"

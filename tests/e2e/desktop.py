@@ -177,10 +177,19 @@ def native_file(path):
         )
 
     wait(dialog, "native file chooser", 12)
+    window = subprocess.check_output(["xdotool", "getactivewindow"], text=True).strip()
     subprocess.run(["xdotool", "key", "ctrl+l"], check=True)
     time.sleep(0.14)
+    subprocess.run(["xdotool", "key", "ctrl+a"], check=True)
     subprocess.run(["xdotool", "type", "--clearmodifiers", "--delay", "2", str(path)], check=True)
-    subprocess.run(["xdotool", "key", "Return"], check=True)
+    # GTK asynchronously checks the typed path. Return during completion may
+    # select the suggested entry before the dialog can activate its Open button.
+    for _ in range(10):
+        time.sleep(0.4)
+        if subprocess.check_output(["xdotool", "getactivewindow"], text=True).strip() != window:
+            return
+        subprocess.run(["xdotool", "key", "Return"], check=True)
+    wait(lambda: not dialog(), "file chooser accepted the path", 4)
 
 
 def main():

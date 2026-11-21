@@ -66,7 +66,7 @@ def package_lib(source, alias=None):
         copy(source, out)
 
 
-def include_dependencies(objects, *, fallback=None):
+def include_dependencies(objects):
     required = set()
     for obj in objects:
         result = subprocess.run(
@@ -79,14 +79,7 @@ def include_dependencies(objects, *, fallback=None):
             if match and not system.match(match[1]):
                 required.add((match[1], match[2]))
     for name, path in sorted(required):
-        if fallback is not None:
-            if (
-                not (vendor / name).exists()
-                and not (prefix / "graphics-fallback" / name / name).exists()
-            ):
-                copy(path, fallback / name)
-        else:
-            package_lib(Path(path).resolve() if Path(path).is_relative_to(wheel) else path, name)
+        package_lib(Path(path).resolve() if Path(path).is_relative_to(wheel) else path, name)
 
 
 def install_licenses():

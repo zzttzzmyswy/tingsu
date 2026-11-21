@@ -90,7 +90,7 @@ static const gchar *member(JsonObject *object, const gchar *name) {
 
 static void add_filters(GtkFileChooser *chooser, const char *spec) {
     if (!spec || !*spec) return;
-    // The controller sends Qt-style labels, e.g. "媒体文件 (*.wav *.mp4);;全部文件 (*)".
+    // Accept the controller's space-separated patterns and optional labelled pattern groups.
     gchar **labels = g_strsplit(spec, ";;", -1);
     for (gchar **label = labels; *label; ++label) {
         const char *start = strrchr(*label, '('), *end = strrchr(*label, ')');

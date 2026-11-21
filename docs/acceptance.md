@@ -2,6 +2,13 @@
 
 本页记录各版单文件应用的实测覆盖。下载对应版本的可执行文件并用同版本的 SHA-256 清单核对，放入源码树的 `dist/` 即可复用成品测试。[发行版本](https://github.com/zzttzzmyswy/tingsu/releases)
 
+## v1.4.0 原生桌面窗口与附件工作目录
+
+- 新版 Linux AppImage 在原生 Wayland 和 X11 下分别启动。Wayland 通过门户选窗和逐帧校验，终止采集进程后重新选窗也能恢复。在断网的 Ubuntu 22.04、系统提供旧版 WebKitGTK 4.0 的环境，另行验证了 X11 会议界面、SQLite 初始化与正常退出，以及 Weston 下的窗口通信和文件对话框。另一次从真实腾讯会议的 XWayland 登录窗口采到 377 × 670 画面。腾讯会议在通话中的远端画面仍需实机验证。[门户采集测试](../tests/e2e/wayland_window.py) · [XWayland 测试](../tests/e2e/xwayland_capture.py)
+- 两个应用同时播放不同语音时，PipeWire 和 PulseAudio 分别只转写被选中的一路。ALSA 虚拟输入也经过转写。真实会议录屏抽测的 300.630 到 335.199 秒识别出 2 位说话人、5 段发言。Linux GUI 流程覆盖 Sophnet、SiliconFlow 在线识别、主动分析、失败重试、停止与排队、通过系统对话框添加附件和导出 Markdown。[音频隔离](../tests/e2e/linux_streams.py) · [录屏抽测](../tests/e2e/recording.py) · [桌面流程](../tests/e2e/desktop.py)
+- 在两个主题各开五场会议，检查从首场继承的问题、提醒、解决状态和另一主题的隔离。另用 v1.3.0 的真实 GUI 添加材料并建立会话，再用 v1.4.0 打开同一配置。即使原文件已经删除，原会议和会话仍可恢复，系统 Claude 的工作目录里也有逐字节相同的材料。[主题回归](../tests/e2e/topic_board.py) · [附件迁移与隔离](../tests/test_workspace_materials.py)
+- 系统 Codex、两个版本的 Claude Code 和 DeepSeek Harness 从工作目录按路径读取附件。长文和表格测试以文件末尾或指定单元格中的随机内容校验实际读取结果。回归分别覆盖真实外部 CLI、本地模型协议端点及在线服务。[Codex 读文件](../tests/test_codex_workspace.py) · [Claude 文件工具](../tests/test_claude.py) · [Harness 文件工具](../tests/test_deepseek.py)
+
 ## v1.3.0 系统 Agent、会议材料与 Wayland 选窗
 
 - Linux AppImage 在 X11 和原生 Wayland 两个桌面连接外部 Codex。通过图形连接面板读取模型列表，指定模型、思考等级和速率，验证真实 CLI 发给回环端点的请求字段，并在应用重启后恢复原会话及参数。在线 Codex 另行完成了会议转写后的主动回复。两个平台包均已检查归档，Codex、Claude Code 和 Harness 由用户安装。[Codex 成品测试](../tests/e2e/external_codex.py)

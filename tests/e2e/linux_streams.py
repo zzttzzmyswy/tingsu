@@ -54,7 +54,6 @@ def run(app, key, tts_ffmpeg):
             XDG_SESSION_TYPE="x11",
             QT_QPA_PLATFORM="xcb",
             XDG_CURRENT_DESKTOP="TINGSU_TEST",
-            GIO_USE_VFS="local",
             PULSE_SERVER="unix:" + str(base / "runtime/pulse/native"),
         )
 

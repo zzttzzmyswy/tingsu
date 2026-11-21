@@ -1,5 +1,22 @@
 # 单文件版的体积
 
+## v1.4.0 使用系统网页引擎
+
+以下是 GitHub Release 中 x86_64 单文件的实际字节数。验收线为每个文件 **100,000,000 字节**。表内 MB 按十进制计算。
+
+| 平台 | v1.3.0 | v1.4.0 | 减少 | 距上限 |
+|---|---:|---:|---:|---:|
+| Linux AppImage | 308.30 MB | 91.43 MB（91,425,272 字节） | 70.34% | 8.57 MB |
+| Windows EXE | 257.71 MB | 93.57 MB（93,567,099 字节） | 63.69% | 6.43 MB |
+
+原先由 Python / PySide6 创建的 Qt WebEngine 窗口已改用 C++ 实现。Linux 通过 GTK 3 使用桌面的 WebKitGTK，Windows 通过 Win32 使用系统 WebView2。同一套 HTML 工作台和 Python 会议服务继续处理转写、截图、会话、附件和便签。系统 Agent CLI 仍可独立升级。两个单文件均包含 FFmpeg 和 ffprobe。[Linux 窗口实现](../desktop/linux/main.cpp) · [Windows 窗口实现](../windows/native/webview.cpp)
+
+首次配置机器时，Linux 需要 GTK 3、JSON-GLib 与 WebKitGTK 4.1 或兼容的 4.0，Windows 需要 WebView2 Evergreen。上表只统计下载听序所需的发行文件，系统引擎的安装、应用缓存和会议材料另外占用磁盘。[运行环境和启动步骤](../README.md) · [v1.4.0 单文件与 SHA-256](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.4.0)
+
+如果继续压缩，优先比较 Windows FFmpeg 与 ffprobe 的共享库构建，再按真实会议录屏、音频输入和取帧用例评估 Linux 编解码组件。相比继续重写会议业务，这两处更直接影响发行体积。具体收益需要以保留相同输入格式和采集能力的成品测量。
+
+## v1.3.0 外置系统 Agent
+
 v1.3.0 改用系统安装的 Codex、Claude Code 和 DeepSeek Harness。下载 Linux AppImage 为 **294.01 MiB**（308,296,184 字节），Windows EXE 为 **245.77 MiB**（257,708,900 字节）。与 v1.2.0 比较，分别减少 **169.91 MiB（36.6%）** 和 **203.85 MiB（45.3%）**。两端继续随包提供 Qt WebEngine、Python 和音视频运行组件。数字按发布文件实际长度计算。[v1.3.0 单文件和校验清单](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.3.0)
 
 ## v1.2.0 体积基线

@@ -1,4 +1,4 @@
-"""Exercise ten meeting-workspace features through a real Qt WebChannel UI.
+"""Exercise ten meeting-workspace features through the packaged desktop UI.
 
 Use --app inside an isolated Linux test display, or --seed-dir to create data/
 and config/ for a Windows / Wayland test account, then --port on its debug port.

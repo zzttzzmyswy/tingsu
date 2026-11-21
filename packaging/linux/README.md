@@ -13,3 +13,13 @@
 ```
 
 构建在 Ubuntu 22.04 容器里进行。脚本从上游发布页获取 AppImage 启动器和 PipeWire 1.4.2 录音客户端，校验 SHA-256 后组装只读镜像。包内 `usr/share/doc/tingsu/third-party` 存放发行版包清单、依赖许可证与上游声明。源录屏、用户配置、凭据、测试数据和宿主用户目录不参与镜像组装。
+
+从源码运行时，安装 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或 4.0 的开发包，然后在仓库根目录编译窗口宿主并启动。
+
+```sh
+mkdir -p build
+./desktop/linux/build.sh build/tingsu-webview
+./tingsu
+```
+
+可在已有的 Wayland 或 X11 测试桌面运行 `python3 desktop/linux/test_stdio.py build/tingsu-webview`，验证界面的本地资源加载、消息传输和文件对话框关闭。

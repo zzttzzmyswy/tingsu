@@ -97,7 +97,7 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 
 源码开发使用 Python 3.10+。安装 [requirements.txt](requirements.txt) 并提供 FFmpeg、ffprobe。在 Linux 安装 C++、pkg-config 和 GTK 3、WebKitGTK、JSON-GLib 开发包，运行 `mkdir -p build && desktop/linux/build.sh build/tingsu-webview`，再执行 `./tingsu`。Windows 按打包说明构建 Win32 窗口后，可设置 `TINGSU_DESKTOP_HOST` 指向该 EXE 并运行 `py -m meeting_agent`。源码模式下 Linux 单应用音频依赖 PipeWire 或 PulseAudio 的客户端命令，Wayland 共享画面依赖 PyGObject、GStreamer 和桌面对应的 XDG ScreenCast Portal。Windows 采集组件的源码和构建脚本位于 [windows/native](windows/native/)。
 
-Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。不同版本单文件的组成、Qt 和媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
+Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。各发行版体积、新旧图形栈的差异与媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
 
 ## 本机数据与密钥
 

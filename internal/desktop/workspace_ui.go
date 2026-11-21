@@ -16,7 +16,7 @@ type choice struct{ id, label string }
 
 var kinds = []choice{{"question", "问题"}, {"task", "待办"}, {"decision", "决策"}, {"idea", "想法"}}
 var statuses = []choice{{"open", "待跟进"}, {"in_progress", "进行中"}, {"done", "已完成"}}
-var services = []choice{{"codex", "Codex"}, {"claude", "Claude Code"}, {"deepseek", "DeepSeek Harness"}, {"openai", "OpenAI"}}
+var services = []choice{{"codex", "Codex"}, {"claude", "Claude Code"}, {"deepseek", "DeepSeek Harness"}}
 
 func labelOf(opts []choice, id string) string {
 	for _, c := range opts {
@@ -160,7 +160,6 @@ func (u *workbench) feed(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, col(3, u.text(str(u.meeting()["title"]), 22, ink, true), u.oneLine("会议记录", 13, muted))), layout.Rigid(fixedWidth(105, u.drop("feed/filter", labelOf(filter, u.feedKind), filter, u.feedKind, false, func(v string) { u.feedKind = v }))), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.button("find", "查找", false, u.openSearch)))
 
 			}),
-			layout.Rigid(u.timeline),
 			layout.Flexed(1, func(g C) D {
 				l := u.list("feed")
 				l.ScrollToEnd = l.Position.Length > g.Constraints.Max.Y
@@ -313,14 +312,18 @@ func (u *workbench) board(g C) D {
 				if status != "" {
 					meta += "   ·   " + labelOf(statuses, status)
 				}
-				content := []W{u.text(meta, 12, muted, true), u.text(str(n["title"]), 17, ink, true)}
+				content := []W{func(g C) D {
+					return layout.W.Layout(g, func(g C) D {
+						return box(g, paper, 4, padding{Left: 6, Right: 6, Top: 2, Bottom: 2}.Wrap(u.text(meta, 12, dark, true)))
+					})
+				}, u.text(str(n["title"]), 17, ink, true)}
 				if s := str(n["body"]); s != "" {
 					content = append(content, u.text(s, 14, ink, false))
 				}
 				if s := str(n["source_title"]); s != "" {
 					content = append(content, u.text("来自 "+s, 12, muted, false))
 				}
-				return btn.Layout(g, func(g C) D { return box(full(g), bg, 9, inset(12, col(5, content...))) })
+				return btn.Layout(g, func(g C) D { return relief(full(g), bg, 7, btn.Pressed(), inset(12, col(5, content...))) })
 			})
 		}
 		if len(cards) == 0 {
@@ -432,7 +435,7 @@ func (u *workbench) submitForm() {
 func (u *workbench) settingsForm() {
 	s := obj(u.state["settings"])
 	v := map[string]string{}
-	for _, k := range []string{"provider", "agent", "siliconflow_model", "sophnet_model", "model", "codex_path", "claude_path", "deepseek_path"} {
+	for _, k := range []string{"provider", "agent", "siliconflow_model", "sophnet_model", "codex_path", "claude_path", "deepseek_path"} {
 		v[k] = str(s[k])
 	}
 	for _, k := range []string{"auto", "share_frames"} {
@@ -449,7 +452,7 @@ func (u *workbench) settingsForm() {
 	v["siliconflow_key"] = ""
 	u.prefsTab = "asr"
 	u.localCLI = str(s["agent"])
-	if u.localCLI == "" || u.localCLI == "openai" {
+	if providers[u.localCLI] == nil {
 		u.localCLI = "codex"
 	}
 	u.custom = map[string]bool{}
@@ -460,7 +463,7 @@ func (u *workbench) savePrefs() {
 	for _, k := range []string{"provider", "agent"} {
 		a[k] = u.fields[k]
 	}
-	for _, k := range []string{"siliconflow_model", "sophnet_model", "model", "codex_path", "claude_path", "deepseek_path"} {
+	for _, k := range []string{"siliconflow_model", "sophnet_model", "codex_path", "claude_path", "deepseek_path"} {
 		a[k] = u.val(k)
 	}
 	for _, k := range []string{"auto", "share_frames"} {
@@ -472,7 +475,7 @@ func (u *workbench) savePrefs() {
 		return
 	}
 	a["chunk"] = chunk
-	for _, k := range []string{"siliconflow_key", "sophnet_key", "openai_key"} {
+	for _, k := range []string{"siliconflow_key", "sophnet_key"} {
 		if v := u.val(k); v != "" {
 			a[k] = v
 		}

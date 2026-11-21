@@ -13,6 +13,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import socket
@@ -214,6 +215,22 @@ def run(args):
         else:
             cmd("import", "-window", "root", str(path))
 
+    def toolbar_pixels():
+        path = root / "meter.png"
+        screen(path)
+        with Image.open(path) as image:
+            return np.asarray(image.convert("RGB"))
+
+    def idle_meter():
+        pixels = toolbar_pixels()
+        idle = (pixels == (201, 214, 210)).all(axis=2)
+        for y, row in enumerate(idle):
+            # Ten inactive segments separated by one physical pixel at 1x.
+            match = re.search(rb"(?:\x01{2,10}\x00{1,3}){9}\x01{2,10}", row.tobytes())
+            if match:
+                return y + 2, match.start(), match.end()
+        return None
+
     class Listen(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             typ = self.headers["Content-Type"]
@@ -410,7 +427,14 @@ def run(args):
                     "select count(*) from meetings where title='Player acceptance' and lower(source_label) like '%meetingqaplayer%'"
                 ),
             )
+            y, left, right = wait("idle audio meter", idle_meter)
             press("ctrl+r")
+
+            def meter_lit():
+                bar = toolbar_pixels()[y, left:right]
+                return (bar == (18, 105, 86)).all(axis=1).sum() >= 3
+
+            wait("toolbar meter reacting to player PCM", meter_lit)
             wait(
                 "player audio at ASR",
                 lambda: dbcount(
@@ -478,6 +502,7 @@ def run(args):
             )
             result = {
                 "timestamped_import": True,
+                "live_audio_meter": True,
                 "protocol": args.protocol,
                 "external_player": "mpv",
                 "audio_correlation": score,

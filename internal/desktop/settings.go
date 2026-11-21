@@ -67,13 +67,12 @@ func appDir(area string) string {
 
 var providers = M{
 	"codex":    M{"title": "Codex", "label": "Codex · 本地 CLI", "hint": "使用本机安装的 Codex CLI 和登录身份。", "cli": "codex"},
-	"openai":   M{"title": "OpenAI", "label": "OpenAI · Conversations API", "hint": "使用 OpenAI API 密钥创建或继续 API 会话。", "cli": ""},
 	"claude":   M{"title": "Claude Code", "label": "Claude Code · 本地 CLI", "hint": "使用本机已授权的 Claude Code。", "cli": "claude"},
 	"deepseek": M{"title": "DeepSeek Harness", "label": "DeepSeek Harness · 本地 CLI", "hint": "连接本机 dsh 的 ACP 服务。", "cli": "dsh"},
 }
 
 func defaults() M {
-	return M{"provider": "siliconflow", "siliconflow_model": "XingChenAGI/XingChenASR-Diarize-V3.0", "sophnet_model": "Fun-ASR", "agent": "codex", "local_agent_options": M{}, "model": "", "codex_path": "", "claude_path": "", "deepseek_path": "", "auto": true, "share_frames": false, "chunk": 12, "selected": ""}
+	return M{"provider": "siliconflow", "siliconflow_model": "XingChenAGI/XingChenASR-Diarize-V3.0", "sophnet_model": "Fun-ASR", "agent": "codex", "local_agent_options": M{}, "codex_path": "", "claude_path": "", "deepseek_path": "", "auto": true, "share_frames": false, "chunk": 12, "selected": ""}
 }
 
 type settings struct {
@@ -89,6 +88,13 @@ func readSettings() (settings, error) {
 	}
 	if err == nil {
 		err = json.Unmarshal(b, &s.values)
+		if err == nil {
+			if providers[str(s.values["agent"])] == nil {
+				s.values["agent"] = "codex"
+			}
+			delete(s.values, "openai_key")
+			delete(s.values, "model")
+		}
 	}
 	return s, err
 }
@@ -139,7 +145,7 @@ func (s settings) public() M {
 		out[k] = s.values[k]
 	}
 	keys := M{}
-	for _, p := range []string{"siliconflow", "sophnet", "openai"} {
+	for _, p := range []string{"siliconflow", "sophnet"} {
 		keys[p] = s.key(p) != ""
 	}
 	out["hasKeys"] = keys

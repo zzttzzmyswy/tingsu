@@ -370,13 +370,10 @@ func (s *Store) PendingCount(mid string) int {
 func (s *Store) SpeechSpeakers(mid string) []string {
 	return strRows(s.read().rows("SELECT DISTINCT speaker FROM events WHERE meeting=? AND kind='speech'", mid), "speaker")
 }
-func (s *Store) Queue(mid string, job Job, peaks []float64) error {
+func (s *Store) Queue(mid string, job Job) error {
 	return s.tx(func(q *query) error {
 		q.exec("INSERT OR IGNORE INTO jobs(path,meeting,start,end) VALUES(?,?,?,?)", job.Path, mid, job.Start, job.End)
 		q.exec("UPDATE meetings SET duration=max(duration,?) WHERE id=?", job.End, mid)
-		for i, p := range peaks {
-			q.exec("INSERT INTO levels VALUES(?,?,?) ON CONFLICT(meeting,at) DO UPDATE SET peak=max(levels.peak,excluded.peak)", mid, int(job.Start)+i, p)
-		}
 		return nil
 	})
 }
@@ -398,31 +395,13 @@ func (s *Store) FinishJob(mid, path string, segments []Segment) error {
 		return nil
 	})
 }
-func levels(q *query, mid string, start, end float64) []float64 {
-	width := max(1., end-start)
-	bins := make([]float64, 174)
-	if width < 174 {
-		rs := q.rows("SELECT at,peak FROM levels WHERE meeting=? AND at>=?", mid, int(start))
-		if len(rs) == 0 {
-			return []float64{}
-		}
-		samples := map[int]float64{}
-		for _, r := range rs {
-			samples[integer(r["at"], 0)] = num(r["peak"])
-		}
-		for i := range bins {
-			bins[i] = samples[int(start+float64(i)*width/174)]
-		}
-	} else {
-		rs := q.rows("SELECT min(173,max(0,cast((at-?)*174.0/? AS integer))) bin,max(peak) peak FROM levels WHERE meeting=? AND at>=? GROUP BY bin", start, width, mid, int(start))
-		if len(rs) == 0 {
-			return []float64{}
-		}
-		for _, r := range rs {
-			bins[integer(r["bin"], 0)] = num(r["peak"])
-		}
+func (s *Store) ClearPending(mid string) error {
+	if mid == "" {
+		_, err := s.db.Exec("DELETE FROM jobs")
+		return err
 	}
-	return bins
+	_, err := s.db.Exec("DELETE FROM jobs WHERE meeting=?", mid)
+	return err
 }
 func (s *Store) Snapshot(mid string, limit int) (Row, error) {
 	limit = max(1, limit)
@@ -437,7 +416,7 @@ func (s *Store) Snapshot(mid string, limit int) (Row, error) {
 		if older {
 			rs = rs[1:]
 		}
-		state = Row{"meetings": q.rows(meetingsSelect + "ORDER BY m.demo ASC,m.created DESC,m.rowid DESC"), "topics": q.rows("SELECT t.id,t.name,count(m.id) AS meeting_count FROM topics t LEFT JOIN meetings m ON m.topic_id=t.id GROUP BY t.id ORDER BY max(m.rowid) DESC,t.name"), "meeting": m, "events": rs, "older": older, "trackSpeech": q.rows("SELECT at,end,speaker FROM events WHERE meeting=? AND kind='speech' ORDER BY at,seq", mid), "speakers": q.rows("SELECT speaker,sum(max(0,end-at)) seconds,min(seq) first FROM events WHERE meeting=? AND kind='speech' GROUP BY speaker ORDER BY first", mid), "levels": levels(q, mid, num(m["origin"]), num(m["duration"])), "notes": notes(q, mid), "topicNotes": topicNotes(q, mid), "pending": integer(q.one("SELECT count(*) AS n FROM jobs WHERE meeting=?", mid)["n"], 0), "meetingSessions": agentSessions(q, mid)}
+		state = Row{"meetings": q.rows(meetingsSelect + "ORDER BY m.demo ASC,m.created DESC,m.rowid DESC"), "topics": q.rows("SELECT t.id,t.name,count(m.id) AS meeting_count FROM topics t LEFT JOIN meetings m ON m.topic_id=t.id GROUP BY t.id ORDER BY max(m.rowid) DESC,t.name"), "meeting": m, "events": rs, "older": older, "speakers": q.rows("SELECT speaker,sum(max(0,end-at)) seconds,min(seq) first FROM events WHERE meeting=? AND kind='speech' GROUP BY speaker ORDER BY first", mid), "notes": notes(q, mid), "topicNotes": topicNotes(q, mid), "pending": integer(q.one("SELECT count(*) AS n FROM jobs WHERE meeting=?", mid)["n"], 0), "meetingSessions": agentSessions(q, mid)}
 		return nil
 	})
 	return state, err

@@ -42,10 +42,7 @@ func (b *bridge) agentConfig(provider string) agent.Config {
 	options, _ := b.settings.values["local_agent_options"].(M)
 	opt, _ := prefs(options[provider])
 	model := str(opt["model"])
-	if provider == "openai" {
-		model = str(b.settings.values["model"])
-	}
-	return agent.Config{Provider: provider, Key: b.settings.key("openai"), Model: model, Effort: str(opt["effort"]), Speed: str(opt["speed"]), Executable: str(b.settings.values[provider+"_path"]), DataDir: b.data, Workspace: filepath.Join(b.data, "workspaces", fmt.Sprintf("%x", hash[:12])), History: b.db}
+	return agent.Config{Provider: provider, Model: model, Effort: str(opt["effort"]), Speed: str(opt["speed"]), Executable: str(b.settings.values[provider+"_path"]), DataDir: b.data, Workspace: filepath.Join(b.data, "workspaces", fmt.Sprintf("%x", hash[:12]))}
 }
 func (b *bridge) connect(a M) error {
 	if busy, q := b.turns.State(); busy || q > 0 {
@@ -57,13 +54,13 @@ func (b *bridge) connect(a M) error {
 	if p == "" {
 		p = str(m["topic_provider"])
 	}
-	if p == "" {
+	if providers[p] == nil && str(a["provider"]) == "" {
 		p = str(b.settings.values["agent"])
 	}
 	if providers[p] == nil {
 		return errors.New("未知 AI 服务")
 	}
-	if raw, ok := a["options"]; ok && p != "openai" {
+	if raw, ok := a["options"]; ok {
 		opt, e := prefs(raw)
 		if e != nil {
 			return e

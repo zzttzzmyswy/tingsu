@@ -89,6 +89,11 @@ func newBridge(h *host, data string) (*bridge, error) {
 			})
 		},
 	})
+	if err := b.asr.DiscardPrevious(); err != nil {
+		b.asr.Close()
+		db.Close()
+		return nil, err
+	}
 	b.turns = agent.NewScheduler(agent.Hooks{Position: func(mid string) float64 {
 		if t, ok := b.asr.Position(); ok {
 			return t
@@ -150,7 +155,7 @@ func (b *bridge) publish() {
 		files = append(files, filepath.Base(p))
 	}
 	workspace := ""
-	if b.status == "ready" && b.provider != "openai" {
+	if b.status == "ready" {
 		workspace = b.client.Workspace()
 	}
 	sending, queued := b.turns.State()

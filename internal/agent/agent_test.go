@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/zzttzzmyswy/tingsu/internal/store"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,44 +15,34 @@ import (
 	"time"
 )
 
+type queueFixture struct{ backend }
+
+func (queueFixture) close() {}
+func (queueFixture) send(ctx context.Context, _ string, input []M, delta func(string), _ Tool) (string, error) {
+	var req M
+	if err := json.Unmarshal([]byte(str(input[0]["text"])), &req); err != nil {
+		return "", err
+	}
+	msg := str(req["request"])
+	delta(msg)
+	if msg == "一" {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return msg, nil
+}
 func TestTurnQueueCancelAndDetach(t *testing.T) {
 	partial := make(chan struct{}, 1)
 	done := make(chan struct{}, 4)
 	var mu sync.Mutex
 	var assistant []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" {
-			fmt.Fprint(w, `{"id":"conv_test"}`)
-			return
-		}
-		var m M
-		json.NewDecoder(r.Body).Decode(&m)
-		v := rows(rows(m["input"])[0]["content"])
-		var req M
-		json.Unmarshal([]byte(str(v[0]["text"])), &req)
-		msg := str(req["request"])
-		fmt.Fprint(w, "data: "+encode(M{"type": "response.output_text.delta", "delta": msg})+"\n\n")
-		w.(http.Flusher).Flush()
-		if msg == "一" {
-			<-r.Context().Done()
-			return
-		}
-		fmt.Fprint(w, "data: "+encode(M{"type": "response.completed", "response": M{"output": []M{}}})+"\n\n")
-	}))
-	defer server.Close()
-	t.Setenv("OPENAI_BASE_URL", server.URL+"/v1")
-	c, e := New(Config{Provider: "openai", Key: "fixture", DataDir: t.TempDir()})
+	c, e := New(Config{Provider: "codex", DataDir: t.TempDir()})
 	if e != nil {
 		t.Fatal(e)
 	}
+	c.impl = queueFixture{}
+	c.session = "fixture"
 	defer c.Close()
-	ctx := context.Background()
-	if e = c.Connect(ctx); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = c.Open(ctx, "", "新会话"); e != nil {
-		t.Fatal(e)
-	}
 	h := Hooks{Position: func(string) float64 { return 1 }, Context: func(string) (M, error) { return M{}, nil }, Event: func(mid, k string, _ float64, _, text string, _ []string) error {
 		if k == "assistant" {
 			mu.Lock()
@@ -216,71 +203,6 @@ func TestInstalledAgent(t *testing.T) {
 	t.Logf("%s: workspace file -> %d mutations -> streamed reply -> resume OK", provider, notes)
 }
 
-func TestRepairInterruptedOpenAITool(t *testing.T) {
-	var calls int
-	var replies []M
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/items") {
-			fmt.Fprint(w, encode(M{"data": []M{{"type": "function_call", "call_id": "persistent"}, {"type": "message", "role": "user"}}}))
-			return
-		}
-		if r.URL.Path != "/v1/responses" {
-			fmt.Fprint(w, encode(M{"id": "conv_repair", "metadata": M{"title": "会议"}}))
-			return
-		}
-		var req M
-		json.NewDecoder(r.Body).Decode(&req)
-		replies = rows(req["input"])
-		calls++
-		if calls == 1 {
-			fmt.Fprint(w, "data: "+encode(M{"type": "response.completed", "response": M{"output": []M{{"type": "function_call", "name": "create_note", "arguments": encode(M{"kind": "idea", "title": "保留", "body": ""}), "call_id": "persistent"}}}})+"\n\n")
-			return
-		}
-		if calls == 2 {
-			return
-		}
-		fmt.Fprint(w, "data: "+encode(M{"type": "response.output_text.delta", "delta": "完成"})+"\n\ndata: "+encode(M{"type": "response.completed", "response": M{"output": []M{}}})+"\n\n")
-	}))
-	defer server.Close()
-	t.Setenv("OPENAI_BASE_URL", server.URL+"/v1")
-	db, e := store.Open(filepath.Join(t.TempDir(), "meetings.sqlite"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.Close()
-	cfg := Config{Provider: "openai", DataDir: t.TempDir(), Key: "fixture", History: db}
-	ctx := context.Background()
-	connect := func(id string) *Client {
-		c, e := New(cfg)
-		if e != nil {
-			t.Fatal(e)
-		}
-		t.Cleanup(c.Close)
-		if e = c.Connect(ctx); e != nil {
-			t.Fatal(e)
-		}
-		if _, e = c.Open(ctx, id, "会议"); e != nil {
-			t.Fatal(e)
-		}
-		return c
-	}
-	mutations := 0
-	tool := func(name string, args M) (any, error) { mutations++; return M{"id": "stable-note-id"}, nil }
-	c := connect("")
-	if _, e = c.Send(ctx, "m", "创建便签", nil, "", nil, nil, tool); e == nil {
-		t.Fatal("expected interrupted response")
-	}
-	c.Close()
-	c = connect("conv_repair")
-	sessions, e := c.Sessions(ctx)
-	if e != nil || len(sessions) != 1 {
-		t.Fatal(sessions, e)
-	}
-	reply, e := c.Send(ctx, "m", "继续", nil, "", nil, nil, tool)
-	if e != nil || reply != "完成" || mutations != 1 || len(replies) != 2 || replies[0]["type"] != "function_call_output" || !strings.Contains(str(replies[0]["output"]), "stable-note-id") {
-		t.Fatal(reply, e, mutations, replies)
-	}
-}
 func TestTopicWorkspaceCopiesAssociatedOriginal(t *testing.T) {
 	data := t.TempDir()
 	mid := "standalone"

@@ -91,7 +91,7 @@ func Run(args []string) error {
 				os.Setenv("TINGSU_CAPTURE_DESKTOP", a[2:])
 			}
 		case "--version":
-			fmt.Println("Tingsu 2.2.0")
+			fmt.Println("Tingsu 2.3.0")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)
@@ -133,7 +133,7 @@ func Run(args []string) error {
 
 func (h *host) serve() {
 	ctx, b := h.ctx, h.bridge
-	tick := time.NewTicker(350 * time.Millisecond)
+	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	var refresh <-chan time.Time
 	for ctx.Err() == nil {
@@ -152,9 +152,8 @@ func (h *host) serve() {
 			}
 		case <-tick.C:
 			if b != nil && b.ready && b.asr.Status() == "recording" {
-				if t, ok := b.asr.Position(); ok {
-					b.event("position", fmt.Sprint(t))
-				}
+				pos, peak, receiving := b.asr.Meter()
+				b.write(M{"type": "meter", "position": pos, "peak": peak, "receiving": receiving})
 			}
 		}
 	}
@@ -170,7 +169,6 @@ func (h *host) dispatch(p packet) {
 			b.ready = true
 			b.publish()
 			b.loadSources()
-
 		}
 	case "dialog-result":
 		if fn := h.dialogs[p.ID]; fn != nil {

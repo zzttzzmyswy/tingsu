@@ -36,12 +36,8 @@ CREATE INDEX IF NOT EXISTS topic_notes_topic ON topic_notes(topic,status);
 CREATE TABLE IF NOT EXISTS topic_reminders (meeting TEXT PRIMARY KEY REFERENCES meetings(id));
 CREATE TABLE IF NOT EXISTS jobs (
   path TEXT PRIMARY KEY, meeting TEXT REFERENCES meetings(id), start REAL, end REAL);
-CREATE TABLE IF NOT EXISTS levels (
-  meeting TEXT REFERENCES meetings(id), at INTEGER, peak REAL, PRIMARY KEY(meeting, at));
 CREATE TABLE IF NOT EXISTS media (path TEXT PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS meetings_topic ON meetings(topic_id);
-CREATE TABLE IF NOT EXISTS openai_sessions(account TEXT,id TEXT,title TEXT,PRIMARY KEY(account,id));
-CREATE TABLE IF NOT EXISTS openai_pending(account TEXT,id TEXT,outputs TEXT,PRIMARY KEY(account,id));
 CREATE INDEX IF NOT EXISTS jobs_meeting_time ON jobs(meeting,start,path);
 
 CREATE TABLE IF NOT EXISTS untimed_transcript_events (

@@ -1,4 +1,4 @@
-// Package agent connects meeting turns to remote OpenAI Conversations or user-installed CLI agents.
+// Package agent connects meeting turns to user-installed CLI agents.
 package agent
 
 import (
@@ -14,15 +14,8 @@ import (
 )
 
 type M = map[string]any
-type History interface {
-	OpenAISessions(account string) []M
-	RememberOpenAI(account, id, title string) error
-	OpenAIPending(account, id string) (map[string]string, error)
-	SaveOpenAIPending(account, id string, items map[string]string) error
-}
 type Config struct {
-	Provider, Key, Model, Executable, Effort, Speed, Workspace, DataDir string
-	History                                                             History
+	Provider, Model, Executable, Effort, Speed, Workspace, DataDir string
 }
 type Tool func(string, M) (any, error)
 type backend interface {
@@ -57,13 +50,6 @@ func New(c Config) (*Client, error) {
 	life, stop := context.WithCancel(context.Background())
 	client := &Client{cfg: c, life: life, stop: stop}
 	switch c.Provider {
-	case "openai":
-		b, e := newOpenAI(c)
-		if e != nil {
-			stop()
-			return nil, e
-		}
-		client.impl = b
 	case "codex":
 		client.impl = &codex{cfg: c}
 	case "claude":

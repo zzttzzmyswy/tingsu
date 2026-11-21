@@ -75,56 +75,34 @@ func upload(t *testing.T, r *http.Request) []byte {
 	}
 	return p
 }
-func TestClosePreservesInflightAndQueuedTailForRetry(t *testing.T) {
-	s, mid := testStore(t)
-	dir := t.TempDir()
-	pcm := bytes.Repeat([]byte{90, 1}, media.Rate*2)
-	jobs := []string{}
-	for i := 0; i < 2; i++ {
-		p := writePCM(t, dir, pcm)
-		jobs = append(jobs, p)
-		if e := s.Queue(mid, store.Job{Path: p, Start: float64(i * 2), End: float64(i*2 + 2)}, media.Peaks(pcm)); e != nil {
-			t.Fatal(e)
+func TestDiscardPrevious(t *testing.T) {
+	db, mid := testStore(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, mid)
+	os.Mkdir(dir, 0700)
+	chunk := filepath.Join(dir, "audio-old.wav")
+	other := filepath.Join(dir, "notes.txt")
+	for _, p := range []string{chunk, other} {
+		if err := os.WriteFile(p, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	var block sync.Once
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upload(t, r)
-		block.Do(func() { close(entered); <-release })
-		io.WriteString(w, `{"text":"保存发言"}`)
-	}))
-	defer server.Close()
-	t.Setenv("TINGSU_SILICONFLOW_URL", server.URL)
-	cfg := Config{Provider: "siliconflow", Model: "fixture-asr", APIKey: "fixture"}
-	a := New(s, dir, Callbacks{})
-	if e := a.Retry(mid, cfg); e != nil {
-		t.Fatal(e)
+	if err := db.Queue(mid, store.Job{Path: chunk, End: 2}); err != nil {
+		t.Fatal(err)
 	}
-	await(t, entered)
-	if e := a.Retry(mid, cfg); e == nil {
-		t.Fatal("duplicate worker started")
+	service := New(db, root, Callbacks{})
+	defer service.Close()
+	if err := service.DiscardPrevious(); err != nil {
+		t.Fatal(err)
 	}
-	a.Close()
-	close(release)
-	if s.PendingCount(mid) != 2 || len(s.Events(mid, 0, 0)) != 0 {
-		t.Fatal("close lost or committed in-flight jobs")
+	if db.PendingCount(mid) != 0 {
+		t.Fatal("stale job")
 	}
-	done := make(chan struct{}, 1)
-	b := New(s, dir, Callbacks{Completed: func(string) { done <- struct{}{} }})
-	defer b.Close()
-	if e := b.Retry(mid, cfg); e != nil {
-		t.Fatal(e)
+	if _, err := os.Stat(chunk); !os.IsNotExist(err) {
+		t.Fatal("stale WAV")
 	}
-	await(t, done)
-	if s.PendingCount(mid) != 0 || len(s.Events(mid, 0, 0)) != 2 {
-		t.Fatal("queue was not drained exactly once")
-	}
-	for _, p := range jobs {
-		if _, e := os.Stat(p); !os.IsNotExist(e) {
-			t.Fatal("committed file is still present")
-		}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatal(err)
 	}
 }
 func TestRecordStopsAndDrainsTailAfterEmptyFirstResult(t *testing.T) {
@@ -224,32 +202,48 @@ func TestDiarizationReferenceBoundary(t *testing.T) {
 		t.Fatal(three, e)
 	}
 }
-func TestRecognitionFailureRetainsJob(t *testing.T) {
+func TestRecognitionFailureDiscardsJob(t *testing.T) {
 	db, mid := testStore(t)
 	dir := t.TempDir()
-	pcm := bytes.Repeat([]byte{8, 1}, media.Rate)
-	p := writePCM(t, dir, pcm)
-	if e := db.Queue(mid, store.Job{Path: p, Start: 2, End: 3}, media.Peaks(pcm)); e != nil {
-		t.Fatal(e)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "private-error-body", 401) }))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "private-error-body", 401)
+			return
+		}
+		io.WriteString(w, `{"text":"new recording"}`)
+	}))
 	defer server.Close()
 	t.Setenv("TINGSU_SILICONFLOW_URL", server.URL)
 	failed := make(chan string, 1)
-	a := New(db, dir, Callbacks{Failed: func(_ string, msg string) { failed <- msg }})
+	done := make(chan string, 1)
+	a := New(db, dir, Callbacks{Completed: func(id string) { done <- id }, Failed: func(_ string, msg string) { failed <- msg }})
 	defer a.Close()
-	if e := a.Retry(mid, Config{Provider: "siliconflow", APIKey: "secret"}); e != nil {
-		t.Fatal(e)
+	a.capture = func(ctx context.Context, _ media.Source, dir string, chunk, offset float64, progress func(float64, float64), enqueue media.Enqueue) error {
+		return media.CapturePCM(ctx, bytes.NewReader(bytes.Repeat([]byte{90, 8}, media.Rate*2)), dir, chunk, offset, progress, enqueue)
 	}
-	msg := await(t, failed)
-	if !strings.Contains(msg, "401") || strings.Contains(msg, "secret") || strings.Contains(msg, "private-error-body") {
-		t.Fatal("invalid error masking")
+	if err := a.Record(mid, media.Source{}, Config{Provider: "siliconflow", APIKey: "secret"}, 4, 0); err != nil {
+		t.Fatal(err)
 	}
-	if db.PendingCount(mid) != 1 {
-		t.Fatal("lost failed job")
+	if msg := await(t, failed); !strings.Contains(msg, "401") || strings.Contains(msg, "secret") || strings.Contains(msg, "private-error-body") {
+		t.Fatal("error masking")
 	}
-	if _, e := os.Stat(p); e != nil {
-		t.Fatal(e)
+	deadline := time.Now().Add(5 * time.Second)
+	for a.Status() != "idle" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if db.PendingCount(mid) != 0 {
+		t.Fatal("failed upload retained")
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, mid, "*.wav"))
+	if len(files) != 0 {
+		t.Fatal(files)
+	}
+	if err := a.Record(mid, media.Source{}, Config{Provider: "siliconflow", APIKey: "replacement"}, 4, 0); err != nil {
+		t.Fatal(err)
+	}
+	if await(t, done) != mid || requests.Load() != 2 {
+		t.Fatal("new capture did not complete independently of the failed audio")
 	}
 }
 
@@ -274,7 +268,7 @@ func TestLiveProvider(t *testing.T) {
 	t.Logf("%s returned %d segments, first timestamp %.2f, last timestamp %.2f; diarization=%v", provider, len(r), r[0].Start, r[len(r)-1].End, r[0].Speaker != "")
 }
 
-func TestCloseDuringCapturePersistsPartialWAVAcrossProcessRestart(t *testing.T) {
+func TestCloseDuringCaptureDiscardsPartialWAVAcrossProcessRestart(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db.sqlite3")
 	db, e := store.Open(dbPath)
@@ -287,12 +281,6 @@ func TestCloseDuringCapturePersistsPartialWAVAcrossProcessRestart(t *testing.T) 
 	}
 	pcm := bytes.Repeat([]byte{12, 5}, media.Rate*7)
 	input := writePCM(t, dir, pcm)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upload(t, r)
-		io.WriteString(w, `{"text":"恢复尾段"}`)
-	}))
-	defer server.Close()
-	t.Setenv("TINGSU_SILICONFLOW_URL", server.URL)
 	cfg := Config{Provider: "siliconflow", APIKey: "fixture", Model: "fixture"}
 	a := New(db, filepath.Join(dir, "audio"), Callbacks{})
 	a.capture = replayPCM
@@ -320,27 +308,8 @@ func TestCloseDuringCapturePersistsPartialWAVAcrossProcessRestart(t *testing.T) 
 		t.Fatal(e)
 	}
 	defer db.Close()
-	jobs, e := db.PendingJobs(mid)
-	if e != nil || len(jobs) != 1 {
-		t.Fatalf("expected unsubmitted tail on restart: %v %v", jobs, e)
-	}
-	j := jobs[0]
-	got, e := media.ReadWAV(j.Path)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if len(got) < int(.7*bytesPerSecond) || len(got) >= len(pcm) || !bytes.Equal(got, pcm[:len(got)]) || j.Start != 0 || j.End != seconds(got) {
-		t.Fatal("capture tail was not preserved exactly")
-	}
-	done := make(chan struct{}, 1)
-	b := New(db, dir, Callbacks{Completed: func(string) { done <- struct{}{} }})
-	defer b.Close()
-	if e = b.Retry(mid, cfg); e != nil {
-		t.Fatal(e)
-	}
-	await(t, done)
-	if db.PendingCount(mid) != 0 || len(db.Events(mid, 0, 0)) != 1 {
-		t.Fatal("restored partial WAV was not committed")
+	if db.PendingCount(mid) != 0 {
+		t.Fatal("abandoned audio retained on restart")
 	}
 }
 
@@ -395,7 +364,7 @@ func TestSophnetMultipartAndPolledMillisecondTimestamps(t *testing.T) {
 	}
 }
 
-func replayPCM(ctx context.Context, src media.Source, dir string, chunk, offset float64, position func(float64), enqueue media.Enqueue) error {
+func replayPCM(ctx context.Context, src media.Source, dir string, chunk, offset float64, position func(float64, float64), enqueue media.Enqueue) error {
 	pcm, err := media.ReadWAV(src.ID)
 	if err != nil {
 		return err
@@ -420,4 +389,37 @@ func replayPCM(ctx context.Context, src media.Source, dir string, chunk, offset 
 		}
 	}()
 	return media.CapturePCM(ctx, r, dir, chunk, offset, position, enqueue)
+}
+
+func TestMeterTracksPCMAndExpiresWithoutNewSamples(t *testing.T) {
+	db, mid := testStore(t)
+	s := New(db, t.TempDir(), Callbacks{})
+	defer s.Close()
+	report := make(chan func(float64, float64), 1)
+	s.capture = func(ctx context.Context, _ media.Source, _ string, _, _ float64, position func(float64, float64), _ media.Enqueue) error {
+		report <- position
+		<-ctx.Done()
+		return nil
+	}
+	if err := s.Record(mid, media.Source{}, Config{Provider: "siliconflow", APIKey: "fixture"}, 12, 2); err != nil {
+		t.Fatal(err)
+	}
+	update := await(t, report)
+	check := func(at, level float64, receiving bool) {
+		t.Helper()
+		seenAt, seenLevel, ok := s.Meter()
+		if seenAt != at || seenLevel != level || ok != receiving {
+			t.Fatalf("meter = %v, %v, %v; want %v, %v, %v", seenAt, seenLevel, ok, at, level, receiving)
+		}
+	}
+	check(2, 0, false)
+	update(2.1, 0.6)
+	update(2.2, 0.2)
+	check(2.2, 0.6, true)
+	update(2.3, 0)
+	check(2.3, 0, true)
+	time.Sleep(600 * time.Millisecond)
+	check(2.3, 0, false)
+	s.Stop()
+	check(0, 0, false)
 }

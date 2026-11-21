@@ -1,4 +1,4 @@
-// Drive the packaged Go window over the Windows desktop, using real keyboard
+// Drive the packaged Go window over the Windows desktop, using real mouse and keyboard
 // input, a real file picker and (when supplied) a separate VLC process.
 package main
 
@@ -70,6 +70,75 @@ func focus(h uintptr) {
 	time.Sleep(250 * time.Millisecond)
 }
 
+func mouseMove(h uintptr, x, y int) {
+	p := struct{ X, Y int32 }{int32(x), int32(y)}
+	call("ClientToScreen", h, uintptr(unsafe.Pointer(&p)))
+	// Absolute mouse motion through the Windows input queue also delivers
+	// WM_POINTERUPDATE to applications using mouse-in-pointer.
+	width, height := int(call("GetSystemMetrics", 0)), int(call("GetSystemMetrics", 1))
+	dx := (int(p.X)*65535 + (width-1)/2) / (width - 1)
+	dy := (int(p.Y)*65535 + (height-1)/2) / (height - 1)
+	call("mouse_event", 0x8001, uintptr(dx), uintptr(dy), 0, 0)
+	time.Sleep(80 * time.Millisecond)
+}
+
+func mouseClick(h uintptr, x, y int) {
+	mouseMove(h, x, y)
+	call("mouse_event", 2, 0, 0, 0, 0)
+	call("mouse_event", 4, 0, 0, 0, 0)
+	time.Sleep(300 * time.Millisecond)
+}
+
+// Locate the board divider on two horizontal scan lines of the actual window.
+func boardDivider(h uintptr, width, height int) int {
+	dc := call("GetDC", h)
+	defer call("ReleaseDC", h, dc)
+	pixel := windows.NewLazySystemDLL("gdi32.dll").NewProc("GetPixel")
+	var first, last int
+	for x := width / 2; x < width-16; x++ {
+		color, _, _ := pixel.Call(dc, uintptr(x), uintptr(height/3))
+		if color != 0xecece6 {
+			continue
+		}
+		color, _, _ = pixel.Call(dc, uintptr(x), uintptr(height*2/3))
+		if color == 0xecece6 {
+			if first == 0 {
+				first = x
+			}
+			last = x
+		}
+	}
+	if first == 0 {
+		return -1
+	}
+	return (first + last) / 2
+}
+
+func dragBoard(h uintptr) error {
+	var rect struct{ Left, Top, Right, Bottom int32 }
+	call("GetClientRect", h, uintptr(unsafe.Pointer(&rect)))
+	width, height := int(rect.Right), int(rect.Bottom)
+	fmt.Printf("Window client %dx%d, desktop %dx%d, DPI %d, focused %t\n", width, height, call("GetSystemMetrics", 0), call("GetSystemMetrics", 1), call("GetDpiForWindow", h), call("GetForegroundWindow") == h)
+	start := boardDivider(h, width, height)
+	if start < 0 {
+		return fmt.Errorf("board divider missing in %dx%d client", width, height)
+	}
+	mouseMove(h, start, height/2)
+	call("mouse_event", 2, 0, 0, 0, 0)
+	time.Sleep(100 * time.Millisecond)
+	defer call("mouse_event", 4, 0, 0, 0, 0)
+	for _, offset := range []int{12, 24, 36} {
+		target := start - offset
+		mouseMove(h, target, height/2)
+		time.Sleep(250 * time.Millisecond)
+		actual := boardDivider(h, width, height)
+		if actual < target-3 || actual > target+3 {
+			return fmt.Errorf("board drag from %d to %d: divider at %d", start, target, actual)
+		}
+	}
+	return nil
+}
+
 type winInput struct {
 	Kind        uint32
 	Pad         uint32
@@ -110,6 +179,7 @@ func run() error {
 	player := flag.String("player", "", "VLC executable")
 	video := flag.String("video", "", "local recording to play")
 	flag.Parse()
+	call("SetProcessDPIAware")
 	if *out == "" || *app == "" {
 		return errors.New("需要 -out 和 -app")
 	}
@@ -194,7 +264,19 @@ func run() error {
 	}
 	defer db.Close()
 	name := fmt.Sprintf("会议验收-%d", time.Now().Unix())
-	ctrl('N')
+	if *video != "" {
+		call("ShowWindow", h, 3)
+		time.Sleep(time.Second)
+		if err = dragBoard(h); err != nil {
+			return err
+		}
+		dpi := int(call("GetDpiForWindow", h))
+		mouseClick(h, 112*dpi/96, 18*dpi/96)
+		mouseClick(h, 140*dpi/96, 55*dpi/96)
+		fmt.Println("Dragged the board and clicked the File menu")
+	} else {
+		ctrl('N')
+	}
 	typeText(name)
 	ctrl('S')
 	if err = wait("新建会议", func() bool { return query(db, "SELECT count(*) FROM meetings WHERE title=?", name) }); err != nil {

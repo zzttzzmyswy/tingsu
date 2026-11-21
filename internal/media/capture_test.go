@@ -20,7 +20,7 @@ func TestCaptureShortFirstThenNormalChunksAndExactTail(t *testing.T) {
 	var got []byte
 	var sizes []int
 	clock := 0.
-	e := CapturePCM(context.Background(), bytes.NewReader(pcm), filepath.Join(dir, "chunks"), 12, 0, func(float64) {}, func(path string, a, b float64, peaks []float64) error {
+	e := CapturePCM(context.Background(), bytes.NewReader(pcm), filepath.Join(dir, "chunks"), 12, 0, func(float64, float64) {}, func(path string, a, b float64) error {
 		p, e := ReadWAV(path)
 		if e != nil {
 			return e
@@ -29,9 +29,6 @@ func TestCaptureShortFirstThenNormalChunksAndExactTail(t *testing.T) {
 			t.Fatal("timestamp discontinuity")
 		}
 		clock = b
-		if len(peaks) == 0 || peaks[0] <= 0 {
-			t.Fatal("missing waveform")
-		}
 		sizes = append(sizes, len(p))
 		got = append(got, p...)
 		return nil

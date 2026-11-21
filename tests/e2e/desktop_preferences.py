@@ -28,7 +28,7 @@ def run(app, models):
             ["openbox"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         try:
-            for model in models:
+            for index, model in enumerate(models):
                 process = subprocess.Popen([app, "--x11"], env=env)
                 try:
 
@@ -53,9 +53,14 @@ def run(app, models):
                         time.sleep(0.3)
 
                     # Open via the desktop menu, then select the Local Agent category.
-                    press("alt+s")
-                    press("Return")
-                    click(300, 316)
+                    if index == 0:
+                        click(112, 18)  # File
+                        click(260, 18)  # Switch directly to Settings
+                        click(290, 55)  # Preferences
+                    else:
+                        press("alt+s")
+                        press("Return")
+                    click(300, 275)
                     click(710, 395)
                     x("type", "--clearmodifiers", "--delay", "20", model)
                     # The searchable menu stays open while the CLI is loading.

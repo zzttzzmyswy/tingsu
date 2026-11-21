@@ -194,8 +194,6 @@ func (b *bridge) command(name string, a M) error {
 		return b.start()
 	case "stop":
 		b.asr.Stop()
-	case "retry":
-		return b.asr.Retry(b.mid, b.asrConfig())
 	case "attach":
 		if b.status != "ready" {
 			return errors.New("请先连接 AI 会话")
@@ -289,7 +287,7 @@ func (b *bridge) command(name string, a M) error {
 	case "cancel_agent":
 		b.turns.Cancel()
 	case "open_agent_workspace":
-		if b.status != "ready" || b.provider == "openai" {
+		if b.status != "ready" {
 			return errors.New("请先连接本机 AI 助手")
 		}
 		return openExternal(b.client.Workspace())
@@ -348,7 +346,7 @@ func (b *bridge) saveSettings(a M) error {
 	allowed := defaults()
 	delete(allowed, "selected")
 	for k := range a {
-		if _, ok := allowed[k]; ok || slices.Contains([]string{"siliconflow_key", "sophnet_key", "openai_key"}, k) {
+		if _, ok := allowed[k]; ok || slices.Contains([]string{"siliconflow_key", "sophnet_key"}, k) {
 			values[k] = a[k]
 		}
 	}
@@ -372,7 +370,7 @@ func (b *bridge) saveSettings(a M) error {
 			next[p] = v
 		}
 		for p, v := range updated {
-			if p == "openai" || providers[p] == nil {
+			if providers[p] == nil {
 				return errors.New("未知本机 AI 助手")
 			}
 			v, e := prefs(v)
@@ -385,14 +383,9 @@ func (b *bridge) saveSettings(a M) error {
 	}
 	changed := false
 	if b.client != nil {
-		activeKeys := []string{b.provider + "_path"}
-		if b.provider == "openai" {
-			activeKeys = []string{"model", "openai_key"}
-		}
-		for _, k := range activeKeys {
-			if v, ok := values[k]; ok && !reflect.DeepEqual(v, b.settings.values[k]) {
-				changed = true
-			}
+		key := b.provider + "_path"
+		if v, ok := values[key]; ok {
+			changed = !reflect.DeepEqual(v, b.settings.values[key])
 		}
 		if opts, ok := values["local_agent_options"].(M); ok {
 			old, _ := prefs(saved[b.provider])

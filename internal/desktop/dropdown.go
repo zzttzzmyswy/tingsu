@@ -102,10 +102,10 @@ func (u *workbench) anchor(g C, id, caption string, items []menuItem, selected s
 		if menubar {
 			return box(g, bg, 3, padding{Top: 5, Bottom: 5, Left: 9, Right: 9}.Wrap(u.oneLine(caption, 14, ink)))
 		}
-		return widget.Border{Color: line, Width: 1, CornerRadius: 4}.Layout(g, func(g C) D {
-			return box(full(g), bg, 4, padding{Top: 6, Bottom: 6, Left: 9, Right: 7}.Wrap(func(g C) D {
+		return relief(full(g), bg, 4, btn.Pressed(), func(g C) D {
+			return inset(1, padding{Top: 6, Bottom: 6, Left: 9, Right: 7}.Wrap(func(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.oneLine(caption, 14, ink)), layout.Rigid(func(g C) D { return glyph(g, chevron, 16, muted) }))
-			}))
+			}))(g)
 		})
 	})
 	if u.popup.id != id {
@@ -146,6 +146,18 @@ func (u *workbench) anchor(g C, id, caption string, items []menuItem, selected s
 	return d
 }
 
+func sourceGroup(id string) string {
+	kind, _, _ := strings.Cut(id, ":")
+	switch {
+	case strings.HasSuffix(kind, "-monitor"):
+		return "输出设备 · 系统播放"
+	case strings.HasSuffix(kind, "-mic"):
+		return "输入设备 · 麦克风"
+	case strings.HasSuffix(kind, "-app"):
+		return "应用音频 · 单个程序"
+	}
+	return ""
+}
 func (u *workbench) popupBody(g C, items []menuItem, selected string, search bool) D {
 	query := ""
 	if search {
@@ -158,7 +170,7 @@ func (u *workbench) popupBody(g C, items []menuItem, selected string, search boo
 	}
 	visible := make([]menuItem, 0, len(items))
 	for _, o := range items {
-		if strings.Contains(strings.ToLower(o.label), query) {
+		if strings.Contains(strings.ToLower(o.label+" "+sourceGroup(o.id)), query) {
 			visible = append(visible, o)
 		}
 	}
@@ -204,19 +216,26 @@ func (u *workbench) popupBody(g C, items []menuItem, selected string, search boo
 							u.closePopup()
 							o.act()
 						}
-						return btn.Layout(g, func(g C) D {
-							bg := paper
-							if btn.Hovered() || i == u.popup.index {
-								bg = mint
-							}
-							check := ""
-							if o.id == selected {
-								check = "✓"
-							}
-							return box(full(g), bg, 3, padding{Top: 7, Bottom: 7, Left: 6, Right: 8}.Wrap(func(g C) D {
-								return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(fixedWidth(17, u.oneLine(check, 13, teal))), layout.Flexed(1, u.oneLine(o.label, 14, ink)), layout.Rigid(u.oneLine(o.hint, 12, muted)))
-							}))
-						})
+						rowWidget := func(g C) D {
+							return btn.Layout(g, func(g C) D {
+								bg := paper
+								if btn.Hovered() || i == u.popup.index {
+									bg = mint
+								}
+								check := ""
+								if o.id == selected {
+									check = "✓"
+								}
+								return box(full(g), bg, 3, padding{Top: 7, Bottom: 7, Left: 6, Right: 8}.Wrap(func(g C) D {
+									return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(fixedWidth(17, u.oneLine(check, 13, teal))), layout.Flexed(1, u.oneLine(o.label, 14, ink)), layout.Rigid(u.oneLine(o.hint, 12, muted)))
+								}))
+							})
+						}
+						group := sourceGroup(o.id)
+						if group != "" && (i == 0 || sourceGroup(visible[i-1].id) != group) {
+							return col(2, func(g C) D { return box(full(g), rgb(0xdce9e5), 3, inset(6, u.text(group, 12, dark, true))) }, rowWidget)(g)
+						}
+						return rowWidget(g)
 					})
 				}))
 			}
@@ -235,11 +254,11 @@ func (u *workbench) trackPointer(g C) {
 			u.pointerAt = p.Position.Round()
 		}
 	}
-	area := clip.Rect(image.Rectangle{Max: g.Constraints.Max}).Push(g.Ops)
 	pass := pointer.PassOp{}.Push(g.Ops)
+	area := clip.Rect(image.Rectangle{Max: g.Constraints.Max}).Push(g.Ops)
 	event.Op(g.Ops, &u.pointerAt)
-	pass.Pop()
 	area.Pop()
+	pass.Pop()
 }
 
 func fixedWidth(w unit.Dp, child W) W {

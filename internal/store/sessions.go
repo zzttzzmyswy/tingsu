@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 )
 
@@ -75,33 +74,4 @@ func (s *Store) BindAgent(mid, provider, sid string, expected *string) error {
 		q.exec("UPDATE meetings SET agent=?,session=? WHERE id=?", provider, sid, mid)
 		return nil
 	})
-}
-func (s *Store) OpenAISessions(account string) []Row {
-	return s.read().rows("SELECT id,title FROM openai_sessions WHERE account=? ORDER BY rowid DESC", account)
-}
-func (s *Store) RememberOpenAI(account, id, title string) error {
-	_, e := s.db.Exec("INSERT OR REPLACE INTO openai_sessions VALUES(?,?,?)", account, id, title)
-	return e
-}
-func (s *Store) OpenAIPending(account, id string) (map[string]string, error) {
-	q := s.read()
-	r := q.one("SELECT outputs FROM openai_pending WHERE account=? AND id=?", account, id)
-	if r == nil {
-		return nil, q.err
-	}
-	var m map[string]string
-	e := json.Unmarshal([]byte(str(r["outputs"])), &m)
-	return m, e
-}
-func (s *Store) SaveOpenAIPending(account, id string, items map[string]string) error {
-	if items == nil {
-		_, e := s.db.Exec("DELETE FROM openai_pending WHERE account=? AND id=?", account, id)
-		return e
-	}
-	b, e := json.Marshal(items)
-	if e != nil {
-		return e
-	}
-	_, e = s.db.Exec("INSERT OR REPLACE INTO openai_pending VALUES(?,?,?)", account, id, string(b))
-	return e
 }

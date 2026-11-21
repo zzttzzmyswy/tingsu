@@ -100,7 +100,7 @@ func TestQueueCommitIsDurableAndIdempotent(t *testing.T) {
 		t.Fatal(e)
 	}
 	j := Job{"path", 4, 6}
-	if e = db.Queue(mid, j, []float64{.5, 1}); e != nil {
+	if e = db.Queue(mid, j); e != nil {
 		t.Fatal(e)
 	}
 	if e = db.Close(); e != nil {
@@ -124,7 +124,7 @@ func TestQueueCommitIsDurableAndIdempotent(t *testing.T) {
 		t.Fatal(e)
 	}
 	events := s["events"].([]Row)
-	if s["pending"] != 0 || len(events) != 1 || events[0]["speaker"] != "发言人" || len(s["levels"].([]float64)) != 174 {
+	if s["pending"] != 0 || len(events) != 1 || events[0]["speaker"] != "发言人" {
 		t.Fatal(s)
 	}
 	if s["meeting"].(Row)["duration"] != float64(6) {

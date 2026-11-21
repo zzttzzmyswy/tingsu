@@ -63,8 +63,12 @@ func (u *workbench) topicChoices() []choice {
 }
 func (u *workbench) sourceChoices() []choice {
 	out := []choice{{"", "暂不采集"}}
-	for _, m := range rows(u.state["sources"]) {
-		out = append(out, choice{str(m["id"]), str(m["label"])})
+	for _, suffix := range []string{"-monitor", "-mic", "-app"} {
+		for _, m := range rows(u.state["sources"]) {
+			if strings.HasSuffix(str(m["kind"]), suffix) {
+				out = append(out, choice{str(m["id"]), str(m["label"])})
+			}
+		}
 	}
 	return out
 }

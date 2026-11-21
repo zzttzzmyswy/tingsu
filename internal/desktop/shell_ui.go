@@ -5,7 +5,7 @@ import (
 	"image"
 	"strings"
 
-	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -35,7 +35,6 @@ func (u *workbench) menuBar(g C) D {
 		{"rename", "重命名会议…", "", func() { u.form("rename", map[string]string{"title": str(u.meeting()["title"])}, "title") }},
 		{"topic", "加入主题…", "", func() { u.form("topic", map[string]string{"topic_id": "", "topic_name": ""}, "topic_name") }},
 		{"note", "新建便签…", "Ctrl+K", func() { u.editNote(nil) }},
-		{"retry", "重试待转写片段", "", func() { u.cmd("retry", nil) }},
 	}
 	view := []menuItem{
 		{"find", "查找会议记录…", "Ctrl+F", u.openSearch},
@@ -60,7 +59,7 @@ func (u *workbench) toggleRecording() {
 	switch str(u.state["capture"]) {
 	case "recording":
 		u.cmd("stop", nil)
-	case "stopping":
+	case "draining":
 		return
 	default:
 		if truth(u.meeting()["demo"]) {
@@ -90,7 +89,7 @@ func (u *workbench) captureAudio(g C) D {
 	capture := str(u.state["capture"])
 	if capture == "recording" {
 		rec = "停止转写"
-	} else if capture == "stopping" {
+	} else if capture == "draining" {
 		rec = "正在停止"
 	}
 	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(row(5, func(g C) D { return glyph(g, micIcon, 18, teal) }, u.text("音频", 14, ink, true))), layout.Rigid(layout.Spacer{Width: 8}.Layout),
@@ -105,7 +104,7 @@ func (u *workbench) captureAudio(g C) D {
 				return
 			}
 			u.cmd("set_source", M{"id": id})
-		})), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.button("record-main", rec, true, u.toggleRecording)))
+		})), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.meter), layout.Rigid(u.button("record-main", rec, true, u.toggleRecording)))
 }
 func (u *workbench) shareWindow() { u.open("screen"); u.cmd("screen", nil) }
 func (u *workbench) captureVideo(g C) D {
@@ -163,49 +162,90 @@ func (u *workbench) workspace(g C) D {
 	return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Rigid(u.menuBar), layout.Rigid(rule), layout.Rigid(u.toolbar), layout.Rigid(rule), layout.Flexed(1, u.panes))
 }
 func (u *workbench) panes(g C) D {
-	total := g.Constraints.Max.X
-	showRail := !u.hideRail && total >= g.Dp(910)
-	parts := []layout.FlexChild{}
+	total := float32(g.Constraints.Max.X) / g.Metric.PxPerDp
+	rail := float32(0)
+	showRail := !u.hideRail && total >= 910
+	const handle = 10
 	if showRail {
-		w := min(max(u.railWidth, 155), min(320, float32(total)/g.Metric.PxPerDp*.24))
-		parts = append(parts, layout.Rigid(fixedWidth(unit.Dp(w), u.rail)), layout.Rigid(u.divider(&u.railDrag, &u.railWidth, 1, 155, 320)))
+		rail = u.resizePane(g, &u.railDrag, u.railWidth, 155, min(360, total-610), false)
+		u.railWidth = rail
+	}
+	board := float32(0)
+	if !u.hideBoard {
+		board = u.resizePane(g, &u.boardDrag, u.boardWidth, 230, total-rail-350-2*handle, true)
+		u.boardWidth = board
+	}
+	var parts []layout.FlexChild
+	gap := layout.Spacer{Width: handle}
+	if showRail {
+		parts = append(parts, layout.Rigid(fixedWidth(unit.Dp(rail), u.rail)), layout.Rigid(gap.Layout))
 	}
 	parts = append(parts, layout.Flexed(1, u.feed))
 	if !u.hideBoard {
-		w := min(max(u.boardWidth, 210), float32(total)/g.Metric.PxPerDp*.36)
-		parts = append(parts, layout.Rigid(u.divider(&u.boardDrag, &u.boardWidth, -1, 210, 480)), layout.Rigid(fixedWidth(unit.Dp(w), u.board)))
+		parts = append(parts, layout.Rigid(gap.Layout), layout.Rigid(fixedWidth(unit.Dp(board), u.board)))
 	}
-	return (layout.Flex{}).Layout(g, parts...)
+	dim := (layout.Flex{}).Layout(g, parts...)
+	if showRail {
+		divider(g, &u.railDrag, g.Dp(unit.Dp(rail)), g.Dp(handle))
+	}
+	if !u.hideBoard {
+		divider(g, &u.boardDrag, g.Constraints.Max.X-g.Dp(unit.Dp(board))-g.Dp(handle), g.Dp(handle))
+	}
+	return dim
 }
 
 type panelDrag struct {
-	gesture.Drag
-	at float32
+	active    bool
+	pointer   pointer.ID
+	at, start float32
 }
 
-func (u *workbench) divider(d *panelDrag, value *float32, sign, low, high float32) W {
-	return func(g C) D {
-		for {
-			e, ok := d.Update(g.Metric, g.Source, gesture.Horizontal)
-			if !ok {
-				break
-			}
-			// The handle moves with the divider. Track the initial grab offset in handle coordinates.
-			switch e.Kind {
-			case pointer.Press:
-				d.at = e.Position.X
-			case pointer.Drag:
-				*value = min(high, max(low, *value+sign*(e.Position.X-d.at)/g.Metric.PxPerDp))
-			}
+func (u *workbench) resizePane(g C, d *panelDrag, width, low, high float32, right bool) float32 {
+	width = min(max(low, width), high)
+	for {
+		ev, ok := g.Event(pointer.Filter{Target: d, Kinds: pointer.Press | pointer.Release | pointer.Cancel | pointer.Drag})
+		if !ok {
+			break
 		}
-		w, h := g.Dp(5), g.Constraints.Max.Y
-		area := clip.Rect(image.Rect(0, 0, w, h)).Push(g.Ops)
-		d.Add(g.Ops)
-		pointer.CursorColResize.Add(g.Ops)
-		paint.FillShape(g.Ops, line, clip.Rect(image.Rect(w/2, 0, w/2+1, h)).Op())
-		area.Pop()
-		return D{Size: image.Pt(w, h)}
+		e := ev.(pointer.Event)
+		switch e.Kind {
+		case pointer.Press:
+			if d.active || (e.Source == pointer.Mouse && e.Buttons != pointer.ButtonPrimary) {
+				continue
+			}
+			d.active, d.pointer, d.at, d.start = true, e.PointerID, e.Position.X, width
+			g.Execute(pointer.GrabCmd{Tag: d, ID: e.PointerID})
+		case pointer.Drag, pointer.Release:
+			if !d.active || e.PointerID != d.pointer {
+				continue
+			}
+			delta := (e.Position.X - d.at) / g.Metric.PxPerDp
+			if right {
+				delta = -delta
+			}
+			width = min(high, max(low, d.start+delta))
+			if e.Kind == pointer.Release {
+				d.active = false
+			}
+		case pointer.Cancel:
+			d.active = false
+		}
 	}
+	return width
+}
+func divider(g C, d *panelDrag, x, width int) {
+	h := g.Constraints.Max.Y
+	area := clip.Rect(image.Rect(x, 0, x+width, h)).Push(g.Ops)
+	defer area.Pop()
+	event.Op(g.Ops, d)
+	pointer.CursorColResize.Add(g.Ops)
+	paint.Fill(g.Ops, rgb(0xe6ecec))
+	c := rgb(0x8a9f9b)
+	if d.active {
+		c = teal
+	}
+	mid := x + width/2
+	paint.FillShape(g.Ops, c, clip.UniformRRect(image.Rect(mid-g.Dp(1), h/2-g.Dp(20), mid+g.Dp(2), h/2+g.Dp(20)), g.Dp(2)).Op(g.Ops))
 }
 func (u *workbench) rail(g C) D {
 	g.Constraints.Min.Y = g.Constraints.Max.Y

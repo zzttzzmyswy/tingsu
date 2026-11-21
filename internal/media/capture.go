@@ -118,15 +118,15 @@ func ReadWAV(path string) ([]byte, error) {
 		}
 	}
 }
-func Peaks(pcm []byte) []float64 {
-	p := make([]float64, (len(pcm)+bytesPerSecond-1)/bytesPerSecond)
+
+// peakLevel measures a block of signed little-endian PCM on a 0..1 scale.
+func peakLevel(pcm []byte) float64 {
+	peak := 0
 	for i := 0; i+1 < len(pcm); i += 2 {
-		v := math.Abs(float64(int16(binary.LittleEndian.Uint16(pcm[i:])))) / 32768
-		if v > p[i/bytesPerSecond] {
-			p[i/bytesPerSecond] = v
-		}
+		n := int(int16(binary.LittleEndian.Uint16(pcm[i:])))
+		peak = max(peak, n, -n)
 	}
-	return p
+	return float64(peak) / 32768
 }
 func writeChunk(dir string, pcm []byte) (string, error) {
 	f, e := os.CreateTemp(dir, "audio-*.wav")
@@ -148,11 +148,11 @@ func writeChunk(dir string, pcm []byte) (string, error) {
 	return name, nil
 }
 
-type Enqueue func(path string, start, end float64, peaks []float64) error
-type CaptureFunc func(context.Context, Source, string, float64, float64, func(float64), Enqueue) error
+type Enqueue func(path string, start, end float64) error
+type CaptureFunc func(context.Context, Source, string, float64, float64, func(float64, float64), Enqueue) error
 
 // Capture drains the selected native device or application stream until stopped.
-func Capture(ctx context.Context, source Source, dir string, chunk, offset float64, position func(float64), enqueue Enqueue) error {
+func Capture(ctx context.Context, source Source, dir string, chunk, offset float64, position func(float64, float64), enqueue Enqueue) error {
 	child, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd, e := audioCommand(child, source)
@@ -186,7 +186,7 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 }
 
 // CapturePCM chunks mono 16 kHz PCM, including the partial final chunk on stop.
-func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset float64, position func(float64), enqueue Enqueue) error {
+func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset float64, position func(float64, float64), enqueue Enqueue) error {
 	if math.IsNaN(chunk) || math.IsInf(chunk, 0) || chunk < .05 || chunk > 600 || math.IsNaN(offset) || math.IsInf(offset, 0) || offset < 0 {
 		return errors.New("音频分片长度或起始时间无效")
 	}
@@ -210,7 +210,8 @@ func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset f
 			return e
 		}
 		end := cursor + float64(n)/sampleRate
-		if e = enqueue(path, cursor, end, Peaks(part)); e != nil {
+		if e = enqueue(path, cursor, end); e != nil {
+			os.Remove(path)
 			return e
 		}
 		pending = pending[n:]
@@ -218,7 +219,7 @@ func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset f
 		opening = nil
 		return nil
 	}
-	block := make([]byte, 32*1024)
+	block := make([]byte, 3200)
 	var readErr error
 	for {
 		before := time.Now()
@@ -234,8 +235,11 @@ func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset f
 					cursor = arrival - float64(len(pending)+n)/sampleRate
 				}
 			}
+			first := len(pending) &^ 1
 			pending = append(pending, block[:n]...)
-			position(cursor + float64(len(pending))/sampleRate)
+			if len(pending)-first >= 2 {
+				position(cursor+float64(len(pending))/sampleRate, peakLevel(pending[first:]))
+			}
 			for {
 				target := steady
 				if opening != nil {

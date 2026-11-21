@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/zzttzzmyswy/tingsu/internal/media"
 	"github.com/zzttzzmyswy/tingsu/internal/store"
@@ -28,7 +31,8 @@ type run struct {
 	done        chan struct{}
 	// Fields below are protected by Service.mu.
 	draining, ended, inputFailed, hasPosition bool
-	position                                  float64
+	position, peak                            float64
+	sampled                                   time.Time
 }
 type Service struct {
 	capture    media.CaptureFunc
@@ -131,9 +135,13 @@ func (s *Service) Record(mid string, src media.Source, cfg Config, chunkSeconds,
 		return errors.New("音频分片长度或起始时间无效")
 	}
 	s.mu.Lock()
-	if s.db.PendingCount(mid) > 0 {
+	if err := s.idle(); err != nil {
 		s.mu.Unlock()
-		return errors.New("请先重试尚未转写的音频")
+		return err
+	}
+	if err := s.discard(mid); err != nil {
+		s.mu.Unlock()
+		return err
 	}
 	r, e := s.start(mid, cfg)
 	if e != nil {
@@ -149,8 +157,14 @@ func (s *Service) Record(mid string, src media.Source, cfg Config, chunkSeconds,
 	go func() {
 		defer cancel()
 		dir := filepath.Join(s.root, mid)
-		err := s.capture(recordCtx, src, dir, chunkSeconds, startSeconds, func(pos float64) { s.mu.Lock(); r.position = pos; s.mu.Unlock() }, func(path string, start, end float64, peaks []float64) error {
-			if e := s.db.Queue(mid, store.Job{Path: path, Start: start, End: end}, peaks); e != nil {
+		err := s.capture(recordCtx, src, dir, chunkSeconds, startSeconds, func(pos, peak float64) {
+			s.mu.Lock()
+			r.position = pos
+			r.peak = max(peak, r.peak)
+			r.sampled = time.Now()
+			s.mu.Unlock()
+		}, func(path string, start, end float64) error {
+			if e := s.db.Queue(mid, store.Job{Path: path, Start: start, End: end}); e != nil {
 				return e
 			}
 			r.wake()
@@ -171,19 +185,58 @@ func (s *Service) Record(mid string, src media.Source, cfg Config, chunkSeconds,
 	s.changed()
 	return nil
 }
-func (s *Service) Retry(mid string, cfg Config) error {
+
+// DiscardPrevious is called with the profile instance lock held, before capture starts.
+func (s *Service) DiscardPrevious() error {
 	s.mu.Lock()
-	r, e := s.start(mid, cfg)
-	if e != nil {
-		s.mu.Unlock()
-		return e
+	defer s.mu.Unlock()
+	if err := s.idle(); err != nil {
+		return err
 	}
-	r.ended = true
-	r.draining = true
-	s.mu.Unlock()
-	go s.consume(r)
-	s.changed()
-	return nil
+	return s.discard("")
+}
+
+// Only remove spool files created by Capture inside this profile's audio directory.
+// Database paths are never used as deletion targets.
+func (s *Service) discard(mid string) error {
+	root, err := os.OpenRoot(s.root)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		defer root.Close()
+		dirs, err := os.ReadDir(s.root)
+		if err != nil {
+			return err
+		}
+		for _, dir := range dirs {
+			if !dir.IsDir() || mid != "" && dir.Name() != mid {
+				continue
+			}
+			entries, err := fs.ReadDir(root.FS(), dir.Name())
+			if err != nil {
+				return err
+			}
+			for _, file := range entries {
+				if file.Type().IsRegular() && strings.HasPrefix(file.Name(), "audio-") && strings.HasSuffix(file.Name(), ".wav") {
+					if err := root.Remove(filepath.Join(dir.Name(), file.Name())); err != nil && !os.IsNotExist(err) {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return s.db.ClearPending(mid)
+}
+func (s *Service) Meter() (position, peak float64, receiving bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active == nil || s.active.draining {
+		return 0, 0, false
+	}
+	r := s.active
+	peak, r.peak = r.peak, 0
+	return r.position, peak, time.Since(r.sampled) < 550*time.Millisecond
 }
 func (s *Service) consume(r *run) {
 	// The database is the queue. A single buffered wake-up is sufficient even if
@@ -218,13 +271,18 @@ func (s *Service) consume(r *run) {
 				if r.captureStop != nil {
 					r.captureStop()
 				}
-				s.failed(r.mid, e)
+				s.failed(r.mid, fmt.Errorf("转写中止，未完成音频将清理：%w", e))
 			}
 		}
 		if ended {
 			break
 		}
 		<-r.signal
+	}
+	if failed || s.ctx.Err() != nil {
+		if err := s.discard(r.mid); err != nil {
+			s.failed(r.mid, err)
+		}
 	}
 	s.mu.Lock()
 	s.active = nil

@@ -9,7 +9,7 @@ import (
 	"gioui.org/widget/material"
 )
 
-var prefPages = []choice{{"asr", "语音转写（ASR）"}, {"online", "在线 AI 服务"}, {"local", "本地 Agent"}, {"meeting", "会话行为"}}
+var prefPages = []choice{{"asr", "语音转写（ASR）"}, {"local", "本地 Agent"}, {"meeting", "会话行为"}}
 var asrVendors = []choice{{"siliconflow", "SiliconFlow"}, {"sophnet", "Sophnet"}}
 
 const inheritModel = "跟随本机 CLI"
@@ -111,13 +111,9 @@ func (u *workbench) prefControls() []W {
 			chunks = append(chunks, choice{strconv.Itoa(n), fmt.Sprintf("%d 秒", n)})
 		}
 		field("分段长度", option("chunk", chunks, nil))
-	case "online":
-		field("服务", u.text("OpenAI API", 14, ink, true))
-		keyField("openai")
-		model("model", "对话模型", "应用默认（gpt-5-mini）", values("gpt-5-mini"))
 	case "local":
 		p := u.localCLI
-		field("本机程序", u.drop("pref/local-cli", labelOf(services, p), services[:3], p, false, func(id string) {
+		field("本机程序", u.drop("pref/local-cli", labelOf(services, p), services, p, false, func(id string) {
 			u.localCLI = id
 			delete(u.lists, "preferences")
 			if id == "codex" {
@@ -211,7 +207,7 @@ func (u *workbench) prefControls() []W {
 
 func (u *workbench) openAgent() {
 	p := str(u.meeting()["topic_provider"])
-	if p == "" {
+	if providers[p] == nil {
 		p = str(obj(u.state["settings"])["agent"])
 	}
 	if p == "" {

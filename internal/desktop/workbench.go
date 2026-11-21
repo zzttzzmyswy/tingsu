@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"gioui.org/app"
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/font/opentype"
-	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -68,7 +70,9 @@ func clockText(t float64) string {
 }
 
 type workbench struct {
-	timelineClick                    gesture.Click
+	peak                             float64
+	receiving                        bool
+	dismiss                          bool
 	popup                            popupState
 	surface, pointerAt               image.Point
 	railWidth, boardWidth            float32
@@ -148,6 +152,10 @@ func (u *workbench) drain() {
 	u.mu.Unlock()
 	for _, m := range batch {
 		switch str(m["type"]) {
+		case "meter":
+			u.position = number(m["position"])
+			u.peak = number(m["peak"])
+			u.receiving = truth(m["receiving"])
 		case "quit":
 			u.quitting = true
 		case "dialog":
@@ -196,6 +204,10 @@ func (u *workbench) drain() {
 				}
 				old := str(u.meeting()["id"])
 				u.state = next
+				if str(next["capture"]) != "recording" {
+					u.receiving = false
+					u.peak = 0
+				}
 				if id := str(u.meeting()["id"]); id != old {
 					u.drafts[old] = u.edit("message").Text()
 					u.edit("message").SetText(u.drafts[id])
@@ -253,8 +265,6 @@ func (u *workbench) drain() {
 				case "catalog-error":
 					u.catalogBusy = false
 					u.catalogError = second
-				case "position":
-					u.position, _ = strconv.ParseFloat(second, 64)
 				case "screen-windows":
 					_ = json.Unmarshal([]byte(second), &u.windows)
 					u.open("windows")
@@ -380,19 +390,22 @@ func (u *workbench) button(id, s string, primary bool, fn func()) W {
 		btn := u.click(id)
 		for btn.Clicked(g) {
 			fn()
+			u.window.Invalidate()
 		}
-		style := material.Button(u.th, btn, s)
-		style.TextSize = 13
-		style.CornerRadius = 4
-		style.Inset = layout.Inset{Top: 7, Bottom: 7, Left: 11, Right: 11}
-		if !primary {
-			style.Background = rgb(0xeaf0ee)
-			if btn.Hovered() || g.Focused(btn) {
-				style.Background = mint
+		bg, fg := rgb(0xedf2f1), ink
+		if primary {
+			bg, fg = teal, paper
+		}
+		if btn.Hovered() || g.Focused(btn) {
+			if primary {
+				bg = rgb(0x0c7966)
+			} else {
+				bg = mint
 			}
-			style.Color = ink
 		}
-		return style.Layout(g)
+		return btn.Layout(g, func(g C) D {
+			return relief(g, bg, 5, btn.Pressed(), padding{Top: 7, Bottom: 7, Left: 11, Right: 11}.Wrap(func(g C) D { return layout.Center.Layout(g, u.oneLine(s, 13, fg)) }))
+		})
 	}
 }
 func inset(n unit.Dp, w W) W { return func(g C) D { return layout.UniformInset(n).Layout(g, w) } }
@@ -428,6 +441,35 @@ func box(g C, c color.NRGBA, r unit.Dp, child W) D {
 	call.Add(g.Ops)
 	return d
 }
+
+// Draw an edge, a highlighted face and a lower lip. Pressing lowers the face.
+func relief(g C, c color.NRGBA, r unit.Dp, pressed bool, w W) D {
+	rec := op.Record(g.Ops)
+	dim := w(g)
+	content := rec.Stop()
+	bounds := image.Rectangle{Max: dim.Size}
+	rad := g.Dp(r)
+	edge := max(1, g.Dp(1))
+	paint.FillShape(g.Ops, rgb(0x899d98), clip.UniformRRect(bounds, rad).Op(g.Ops))
+	face := bounds.Inset(edge)
+	offset := edge
+	if pressed {
+		face.Min.Y += edge
+	} else {
+		face.Max.Y -= edge
+		offset = 0
+	}
+	highlight := func(v uint8) uint8 { return uint8((int(v)*7 + 255) / 8) }
+	light := color.NRGBA{highlight(c.R), highlight(c.G), highlight(c.B), 255}
+	area := clip.UniformRRect(face, max(0, rad-edge)).Push(g.Ops)
+	paint.LinearGradientOp{Stop2: f32.Pt(0, float32(dim.Size.Y)), Color1: light, Color2: c}.Add(g.Ops)
+	paint.PaintOp{}.Add(g.Ops)
+	area.Pop()
+	t := op.Offset(image.Pt(0, offset)).Push(g.Ops)
+	content.Add(g.Ops)
+	t.Pop()
+	return dim
+}
 func full(g C) C { g.Constraints.Min.X = g.Constraints.Max.X; return g }
 func (u *workbench) field(id, hint string, multi, secret bool) W {
 	return func(g C) D {
@@ -458,6 +500,18 @@ func (u *workbench) layout(g C) D {
 		g.Execute(key.FocusCmd{Tag: u.nextFocus})
 		u.nextFocus = nil
 	}
+	// Let the control beneath the popup handle its click before dismissing.
+	// In particular, switching menus must leave the newly opened menu visible.
+	dismissID := ""
+	for {
+		ev, ok := g.Event(pointer.Filter{Target: &u.dismiss, Kinds: pointer.Press | pointer.Release})
+		if !ok {
+			break
+		}
+		if p, ok := ev.(pointer.Event); ok && p.Kind == pointer.Release {
+			dismissID = u.popup.id
+		}
+	}
 	u.surface = g.Constraints.Max
 	body := g
 	if u.modal != "" {
@@ -468,20 +522,15 @@ func (u *workbench) layout(g C) D {
 		paint.Fill(g.Ops, color.NRGBA{20, 39, 38, 76})
 		u.modalLayout(g)
 	}
+	if dismissID != "" && dismissID == u.popup.id {
+		u.closePopup()
+	}
 	if u.popup.id != "" {
-		bg := u.click("close-popup")
-		for bg.Clicked(g) {
-			u.closePopup()
-		}
-		context := g
-		// Keep the other top-level menus clickable while a menu is open.
-		dy := 0
-		if strings.HasPrefix(u.popup.id, "menu/") {
-			dy = g.Dp(34)
-		}
-		t := op.Offset(image.Pt(0, dy)).Push(g.Ops)
-		bg.Layout(context, func(C) D { return D{Size: g.Constraints.Max.Sub(image.Pt(0, dy))} })
-		t.Pop()
+		pass := pointer.PassOp{}.Push(g.Ops)
+		bounds := clip.Rect(image.Rectangle{Max: u.surface}).Push(g.Ops)
+		event.Op(g.Ops, &u.dismiss)
+		bounds.Pop()
+		pass.Pop()
 	}
 	u.trackPointer(g)
 	return D{Size: u.surface}

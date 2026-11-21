@@ -33,7 +33,7 @@ func (b *codex) initialize(ctx context.Context) error {
 		return e
 	}
 	b.w = w
-	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.2.0"}, "capabilities": M{"experimentalApi": true}}); e != nil {
+	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.3.0"}, "capabilities": M{"experimentalApi": true}}); e != nil {
 		return e
 	}
 	return w.write(M{"method": "initialized"})

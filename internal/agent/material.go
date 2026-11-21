@@ -126,7 +126,6 @@ func (l library) inputs(ctx context.Context, provider, text string, files []stri
 	return l.blocks(provider, text, staged, frame, meeting)
 }
 func (l library) blocks(provider, text string, files []material, frame string, meeting M) ([]M, error) {
-	remote := provider == "openai"
 	request := M{"request": text, "meeting_context": encode(meeting)}
 	if runtime.GOOS == "windows" && provider == "codex" {
 		request["workspace"] = l.root
@@ -142,43 +141,29 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 	}
 	for _, m := range files {
 		p := m.source
-		if remote {
+		rel, e := filepath.Rel(l.root, m.path)
+		if e != nil {
+			return nil, e
+		}
+		m.info["path"] = filepath.ToSlash(rel)
+		if provider == "codex" && runtime.GOOS == "windows" {
+			m.info["absolute_path"] = m.path
+			m.info["absolute_path_utf16"] = utf16.Encode([]rune(m.path))
+		}
+		if filepath.Base(filepath.Dir(filepath.Dir(p))) == "frames" && p != frame {
 			native = append(native, m)
-		} else {
-			rel, e := filepath.Rel(l.root, m.path)
-			if e != nil {
-				return nil, e
-			}
-			m.info["path"] = filepath.ToSlash(rel)
-			if provider == "codex" && runtime.GOOS == "windows" {
-				m.info["absolute_path"] = m.path
-				m.info["absolute_path_utf16"] = utf16.Encode([]rune(m.path))
-			}
-			if filepath.Base(filepath.Dir(filepath.Dir(p))) == "frames" && p != frame {
-				native = append(native, m)
-			}
 		}
 		manifest = append(manifest, m.info)
 	}
 	if len(files) > 0 {
 		request["attachments"] = manifest
 	}
-	tt := "text"
-	if remote {
-		tt = "input_text"
-	}
-	in := []M{{"type": tt, "text": encode(request)}}
+	in := []M{{"type": "text", "text": encode(request)}}
 	remaining := int64(24 << 20)
-	if remote {
-		remaining = 50000000
-	}
 	for _, m := range native {
 		mime := str(m.info["mime_type"])
 		image := mime == "image/png" || mime == "image/jpeg" || mime == "image/webp" || mime == "image/gif"
-		if !image && !remote {
-			continue
-		}
-		if !image && !strings.Contains("|.pdf|.txt|.md|.csv|.xlsx|.docx|.pptx|.json|.html|.xml|.tsv|.rtf|.doc|.xls|.ppt|", "|"+strings.ToLower(filepath.Ext(m.path))+"|") {
+		if !image {
 			continue
 		}
 		size := m.info["size_bytes"].(int64)
@@ -194,14 +179,7 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 			return nil, e
 		}
 		url := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(b)
-		switch {
-		case !remote:
-			in = append(in, M{"type": "image", "url": url})
-		case image:
-			in = append(in, M{"type": "input_image", "image_url": url})
-		default:
-			in = append(in, M{"type": "input_file", "filename": m.info["name"], "file_data": url})
-		}
+		in = append(in, M{"type": "image", "url": url})
 	}
 	return in, nil
 }

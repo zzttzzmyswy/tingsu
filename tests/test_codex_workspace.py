@@ -21,7 +21,7 @@ class CodexWorkspaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_reads_csv_with_host_tools_and_resumes(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ):
             root = Path(folder)
-            cwd = root / "meeting"
+            cwd = root / "会议 工作目录"
             material = cwd / "attachments" / "session 1" / "会议 正本.csv"
             material.parent.mkdir(parents=True)
             marker = secrets.token_hex(12)

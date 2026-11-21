@@ -174,5 +174,6 @@ jobs:
         shell: pwsh
         env:
           PYTHONUTF8: '1'
+          TINGSU_TEST_DEFAULT_WINDOWS_PROFILE: ${{ matrix.suite == 'codex' && '1' || '0' }}
         run: |
           python -u tests/e2e/native_windows_codex.py --suite ${{ matrix.suite }} --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') --codex (Join-Path $env:RUNNER_TEMP 'System agents/codex.exe')

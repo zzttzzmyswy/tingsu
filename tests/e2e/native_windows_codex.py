@@ -238,10 +238,17 @@ def verify(app, codex):
         home.mkdir()
         # Run with an empty desktop profile. All model inputs, credentials and replies are synthetic.
         env = {k: v for k, v in os.environ.items() if not any(x in k.upper() for x in ("TOKEN", "API_KEY"))}
-        for key, folder in (("LOCALAPPDATA", "local"), ("APPDATA", "roaming")):
-            path = root / folder
-            path.mkdir()
-            env[key] = str(path)
+        if os.environ.get("TINGSU_TEST_DEFAULT_WINDOWS_PROFILE") == "1":
+            if os.environ.get("GITHUB_ACTIONS") != "true":
+                raise RuntimeError("The default-profile check requires a disposable GitHub Actions VM")
+            for key in ("LOCALAPPDATA", "APPDATA"):
+                if (Path(env[key]) / "Tingsu").exists():
+                    raise RuntimeError("Default Tingsu data already exists; this check requires a clean test account")
+        else:
+            for key, folder in (("LOCALAPPDATA", "local"), ("APPDATA", "roaming")):
+                path = root / folder
+                path.mkdir()
+                env[key] = str(path)
         env.update(CODEX_HOME=str(home), TINGSU_APP_DIR=str(root))
         with ThreadingHTTPServer(("127.0.0.1", 0), WorkspaceFixture) as model:
             model.platform = "windows"

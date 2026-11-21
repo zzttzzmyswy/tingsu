@@ -12,6 +12,7 @@ from .agent_options import codex_catalog
 from .local_cli import LocalCLI
 from .runtime import app_directory
 from .agent_tools import LOCAL_CODEX_GUIDANCE, CODEX_OUTPUT, execute
+from .windows_workspace import WorkspaceReadAccess
 
 _WINDOWS_PATH_GUIDANCE = """
 Windows 的 PowerShell 有时会从自身安装目录启动；使用 exec_command 时显式设置 workdir 为输入的
@@ -48,6 +49,7 @@ class CodexBackend:
         self.queue = None
         self.cwd = None
         self.tool_config = {}
+        self.read_access = None
 
     async def connect(self):
         if self.proc and self.proc.returncode is None:
@@ -102,6 +104,8 @@ class CodexBackend:
             if self.workspace and os.name == "nt":
                 windows = config.get("windows") or {}
                 self.scoped_reads = windows.get("sandbox") in ("elevated", "mxc")
+                if not self.scoped_reads:
+                    self.read_access = WorkspaceReadAccess(self.workspace)
                 if not windows.get("sandbox"):
                     # Without an OS sandbox the CLI refuses even Get-Content under
                     # approvalPolicy=never. Use its non-admin restricted token.
@@ -312,6 +316,8 @@ class CodexBackend:
                     )
 
     async def send(self, session_id, inputs, on_delta, handler):
+        if self.read_access:
+            await asyncio.to_thread(self.read_access.refresh)
         messages = []
         for _ in range(8):
 

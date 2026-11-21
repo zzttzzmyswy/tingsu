@@ -1,4 +1,4 @@
-"""Stage a relocatable Python/audio runtime from the clean Ubuntu builder."""
+"""Stage native audio and screen-sharing tools in a relocatable AppDir."""
 
 import os
 from pathlib import Path
@@ -10,9 +10,8 @@ import sys
 dest = Path(sys.argv[1])
 usr = dest / "usr"
 prefix = usr / "lib/tingsu"
-python = prefix / "python"
 vendor = prefix / "native"
-wheel = Path("/opt/tingsu-python")
+media = Path("/opt/tingsu-media")
 licenses = usr / "share/doc/tingsu/third-party"
 multiarch = Path("/usr/lib/x86_64-linux-gnu")
 tools = (
@@ -55,9 +54,7 @@ def tree(source, output, ignore=()):
 def package_lib(source, alias=None):
     source = Path(source)
     name = alias or source.name
-    if source.is_relative_to(wheel):
-        out = python / source.relative_to(wheel)
-    elif graphics_abi.match(name) or name == "libreadline.so.8":
+    if graphics_abi.match(name) or name == "libreadline.so.8":
         # Match the desktop driver and its loader from the same distribution.
         out = prefix / "graphics-fallback" / name / name
     else:
@@ -79,22 +76,11 @@ def include_dependencies(objects):
             if match and not system.match(match[1]):
                 required.add((match[1], match[2]))
     for name, path in sorted(required):
-        package_lib(Path(path).resolve() if Path(path).is_relative_to(wheel) else path, name)
+        package_lib(path, name)
 
 
 def install_licenses():
     licenses.mkdir(parents=True, exist_ok=True)
-    for info in wheel.glob("*.dist-info"):
-        for file in info.rglob("*"):
-            if file.is_file() and (
-                "license" in file.name.lower()
-                or "notice" in file.name.lower()
-                or "copying" in file.name.lower()
-                or "licenses" in file.parts
-                or file.name == "METADATA"
-            ):
-                copy(file, licenses / "wheels" / info.name / file.relative_to(info))
-    # Apt and wheel license files are redistributable as shipped by their upstreams.
     for pkg in Path("/usr/share/doc").iterdir():
         notice = pkg / "copyright"
         if notice.is_file():
@@ -104,21 +90,8 @@ def install_licenses():
     (licenses / "ubuntu-package-versions.tsv").write_bytes(versions)
 
 
-copy("/usr/bin/python3.10", usr / "bin/python3.10", binary=True)
-tree(
-    "/usr/lib/python3.10",
-    usr / "lib/python3.10",
-    ignore=("test", "tests", "idlelib", "tkinter", "ensurepip", "lib2to3", "turtle*", "config-3.10-*"),
-)
-elf_sources += list(Path("/usr/lib/python3.10/lib-dynload").glob("*.so"))
-for directory in ("gi",):
-    root = Path("/usr/lib/python3/dist-packages") / directory
-    tree(root, usr / "lib/python3/dist-packages" / directory, ignore=("*.pyi",))
-    elf_sources += list(root.rglob("*.so"))
-for typelib in (multiarch / "girepository-1.0").glob("*.typelib"):
-    copy(typelib, prefix / "typelib" / typelib.name)
 for tool in tools:
-    path = Path(shutil.which(tool))
+    path = media / "bin" / tool if tool in ("ffmpeg", "ffprobe") else Path(shutil.which(tool))
     copy(path, usr / "bin" / tool, binary=True)
 for plugin in (
     "coreelements",
@@ -149,16 +122,7 @@ for path in (multiarch / "libpulsecommon-15.99.so",):
         path = next(multiarch.rglob("libpulsecommon-*.so"))
     copy(path, vendor / path.name, binary=True)
 
-for path in wheel.iterdir():
-    if (
-        path.name in ("bin", "include", "__pycache__")
-        or path.name.endswith(".dist-info")
-    ):
-        continue
-    if path.is_dir():
-        tree(path, python / path.name, ignore=("*.pyi", "include", "typesystems", "doc", "scripts"))
-        elf_sources += list(path.rglob("*.so"))
-    elif path.suffix == ".py":
-        copy(path, python / path.name)
+tree(media / "licenses", licenses / "ffmpeg")
+copy(Path(sys.argv[2]), usr / "bin/tingsu-portal", binary=True)
 include_dependencies(elf_sources)
 install_licenses()

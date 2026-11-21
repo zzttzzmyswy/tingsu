@@ -210,7 +210,7 @@ def running_desktop(app, root, env, port):
         if page:
             page.close()
         if proc.poll() is None:
-            # The one-file parent starts Python, which owns the native WebView2 window process.
+            # The Go backend owns the native WebView2 window process.
             close = """
             $processes = @(Get-CimInstance Win32_Process)
             $ids = @([int]$env:QA_APP_PID)
@@ -309,10 +309,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path)
     parser.add_argument("--codex", type=Path)
-    parser.add_argument("--suite", choices=("all", "workspace", "board", "codex"), default="all")
+    parser.add_argument("--suite", choices=("all", "workspace", "board", "codex", "transcription"), default="all")
     args = parser.parse_args()
     app = args.app.resolve(strict=True)
     from native_windows_regression import verify_board, verify_workspace
+    if args.suite in ("all", "transcription"):
+        from native_windows_transcription import verify as verify_transcription
+        verify_transcription(app)
     if args.suite in ("all", "codex") and not args.codex:
         parser.error("--codex is required to test the external Codex CLI")
     if args.suite in ("all", "workspace"):

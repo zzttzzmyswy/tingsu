@@ -332,16 +332,20 @@ def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspac
             print("Claude read the random slide code via the portal frame and saved it in a meeting note", flush=True)
             page.click("screen")
         if worker_crash:
-            # Match the exact private output directory before injecting a native process failure.
+            # Identify the portal helper in this test application's process tree.
             candidates = []
-            for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+            for procdir in Path("/proc").glob("[0-9]*"):
                 try:
-                    args = cmdline.read_bytes().rstrip(b"\0").split(b"\0")
-                except OSError:
+                    if Path(os.readlink(procdir / "exe")).name != "tingsu-portal":
+                        continue
+                    pid = int(procdir.name)
+                    while pid > 1 and pid != process.pid:
+                        stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                        pid = int(stat[1])
+                    if pid == process.pid:
+                        candidates.append(int(procdir.name))
+                except (OSError, ValueError, IndexError):
                     continue
-                if (len(args) >= 4 and args[-3:-1] == [b"-m", b"meeting_agent.screen_capture"]
-                        and Path(os.fsdecode(args[-1])).parent == data):
-                    candidates.append(int(cmdline.parent.name))
             assert len(candidates) == 1, candidates
             import signal
             os.kill(candidates[0], signal.SIGKILL)

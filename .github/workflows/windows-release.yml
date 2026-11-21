@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Run the full release matrix or the source Codex integration alone
+        description: Run the full release matrix or the Go backend tests alone
         type: choice
-        options: [all, codex-source]
+        options: [all, go-source]
         default: all
       release_tag:
         description: Candidate release tag in this repository
@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: ${{ fromJSON(inputs.suite == 'codex-source' && '["codex-source"]' || '["workspace","board","codex","codex-source","accessibility"]') }}
+        suite: ${{ fromJSON(inputs.suite == 'go-source' && '["go-source"]' || '["workspace","board","codex","go-source","accessibility","transcription"]') }}
     permissions:
       contents: read
     runs-on: windows-latest
@@ -128,7 +128,7 @@ jobs:
           Write-Host "System WebView2 version $version"
 
       - name: Install the official external Codex CLI for this test
-        if: matrix.suite == 'codex' || matrix.suite == 'codex-source'
+        if: matrix.suite == 'codex'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -147,19 +147,20 @@ jobs:
 
       - name: Install test clients
         id: test_clients
-        if: contains(fromJSON('["workspace","board","codex"]'), matrix.suite)
+        if: contains(fromJSON('["workspace","board","codex","transcription"]'), matrix.suite)
         run: python -m pip install websocket-client==1.8.0 pillow==11.3.0
 
-      - name: Check the system Codex file tools against the source
-        if: matrix.suite == 'codex-source'
+      - uses: actions/setup-go@v5
+        if: matrix.suite == 'go-source'
+        with:
+          go-version-file: go.mod
+      - name: Run the Go backend tests on Windows
+        if: matrix.suite == 'go-source'
         shell: pwsh
         env:
           PYTHONUTF8: '1'
         run: |
-          python -m pip install -r requirements.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:TINGSU_TEST_CODEX = Join-Path $env:RUNNER_TEMP 'System agents/codex.exe'
-          python -m unittest discover -s tests -p test_codex_workspace.py -v
+          go test ./...
 
       - name: Create and reopen a meeting with Windows UI Automation
         if: matrix.suite == 'accessibility'

@@ -1,100 +1,75 @@
-"""Build the portable x64 Windows release with a Windows Python interpreter."""
-
+"""Cross-build (or build natively) the single x64 Windows desktop executable."""
 import argparse
 import hashlib
 import os
+from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
-import urllib.request
+import tempfile
 import zipfile
-from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-FFMPEG_RELEASE = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.1-essentials_build.zip"
-
-
-def download(cache, name, url, expected):
-    target = cache / name
-
-    def matches(path):
-        if not path.is_file():
-            return False
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
-        return digest.hexdigest() == expected
-
-    if not matches(target):
-        print(f"Downloading {name}", flush=True)
-        temp = target.with_suffix(target.suffix + ".part")
-        with urllib.request.urlopen(url, timeout=90) as stream, temp.open("wb") as out:
-            shutil.copyfileobj(stream, out)
-        if not matches(temp):
-            temp.unlink(missing_ok=True)
-            raise SystemExit(f"SHA-256 mismatch for {name}")
-        temp.replace(target)
-    return target
-
-
-def prepare(cache, vendor):
-    ffmpeg = download(
-        cache,
-        "ffmpeg-9.1.zip",
-        FFMPEG_RELEASE,
-        "b9bbbb3acece000cbeec994f856649354e52c773807841e78908374b24d658fd",
-    )
-    with zipfile.ZipFile(ffmpeg) as archive:
-        for filename in ("ffmpeg.exe", "ffprobe.exe", "LICENSE"):
-            member = next(path for path in archive.namelist() if path.endswith("/" + filename))
-            folder = vendor / ("licenses/ffmpeg" if filename == "LICENSE" else "bin")
-            folder.mkdir(parents=True, exist_ok=True)
-            with archive.open(member) as stream, (folder / filename).open("wb") as out:
-                shutil.copyfileobj(stream, out)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--cache", type=Path, default=Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Tingsu-Build"
-    )
-    parser.add_argument(
-        "--vendor", type=Path, help="Use an already extracted copy of the pinned upstream tools"
-    )
+    parser.add_argument("--media", required=True, type=Path, help="Prefix produced by build-media.sh")
     parser.add_argument("--dist", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
-    if sys.platform != "win32" or sys.maxsize <= 2**32:
-        parser.error("Use a 64-bit Windows Python interpreter.")
-    cache = args.cache.resolve()
-    cache.mkdir(parents=True, exist_ok=True)
-    vendor = (args.vendor or cache / "vendor-ffmpeg-9.1").resolve()
-    if not args.vendor:
-        prepare(cache, vendor)
-    env = dict(os.environ, TINGSU_WINDOWS_VENDOR=str(vendor))
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "PyInstaller",
-            "--noconfirm",
-            "--distpath",
-            str(args.dist.resolve()),
-            "--workpath",
-            str(cache / "pyinstaller"),
-            str(HERE / "Tingsu.spec"),
-        ],
-        cwd=ROOT,
-        env=env,
-        check=True,
-    )
-    exe = args.dist.resolve() / "Tingsu-Windows-x86_64.exe"
-    size = exe.stat().st_size
-    if size >= 100_000_000:
-        raise SystemExit(f"Windows executable exceeds the release size budget: {size:,} bytes")
-    print(f"Verified single executable size: {size:,} bytes", flush=True)
-
+    args.dist.mkdir(parents=True, exist_ok=True)
+    media = args.media.resolve()
+    with tempfile.TemporaryDirectory(dir=args.dist) as temp:
+        work = Path(temp)
+        env = dict(os.environ, CGO_ENABLED="0", GOOS="windows", GOARCH="amd64")
+        exe = work / "Tingsu-Windows-x86_64.exe"
+        windres = shutil.which("x86_64-w64-mingw32-windres") or "windres"
+        # Go links .syso resources by their actual paths. Build a private copy of the
+        # entry package inside the module so concurrent platforms need no shared writes.
+        with tempfile.TemporaryDirectory(prefix=".windows-build-", dir=ROOT) as src:
+            package = Path(src)
+            for path in (ROOT / "cmd/tingsu").glob("*.go"):
+                shutil.copyfile(path, package / path.name)
+            resource = package / "resources_windows_amd64.syso"
+            subprocess.run([windres, "--target=pe-x86-64", "resources.rc", "-O", "coff", "-o", resource], cwd=HERE, check=True)
+            subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w -H=windowsgui",
+                            "-o", exe.resolve(), "./" + package.name], env=env, cwd=ROOT, check=True)
+        notices = work / "go"
+        subprocess.run([sys.executable, HERE.parent / "go-notices.py", notices.resolve()], cwd=ROOT, check=True)
+        def tree(folder, prefix):
+            return [(p, prefix + "/" + p.relative_to(folder).as_posix()) for p in folder.rglob("*") if p.is_file()]
+        files = tree(ROOT / "meeting_agent/ui", "ui") + tree(HERE / "licenses", "licenses/native")
+        files += tree(notices, "licenses/go") + tree(media / "licenses", "licenses/ffmpeg")
+        files += [(ROOT / "LICENSE", "licenses/tingsu/LICENSE"), (ROOT / "THIRD_PARTY.md", "licenses/tingsu/THIRD_PARTY.md"),
+                  (HERE / "build-media.sh", "licenses/ffmpeg/build-media.sh")]
+        for f in ["ffmpeg.exe", "ffprobe.exe", "avcodec-63.dll", "avdevice-63.dll", "avfilter-12.dll", "avformat-63.dll",
+                  "avutil-61.dll", "swresample-7.dll", "swscale-10.dll"]:
+            files.append((media / "bin" / f, "bin/" + f))
+        for path in (media / "bin").glob("lib*.dll"):
+            files.append((path, "bin/" + path.name))
+        for f in ["tingsu-capture.exe", "tingsu-host.exe", "tingsu-webview.exe", "WebView2Loader.dll"]:
+            files.append((ROOT / "meeting_agent/native" / f, "bin/" + f))
+        for name in ("ffmpeg-LGPL-2.1.txt", "dav1d.txt", "zlib.txt"):
+            if not (media / "licenses" / name).is_file():
+                raise ValueError("Missing FFmpeg distribution notice: " + name)
+        payload = work / "resources.zip"
+        with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            for path, name in sorted(files, key=lambda entry: entry[1]):
+                entry = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+                entry.external_attr = 0o100644 << 16
+                z.writestr(entry, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+        data = payload.read_bytes()
+        with exe.open("ab") as f:
+            f.write(data)
+            f.write(hashlib.sha256(data).digest())
+            f.write(struct.pack("<Q", len(data)))
+            f.write(b"TINGSU-ZIP-v1")
+        if exe.stat().st_size >= 100_000_000:
+            raise ValueError("Windows single executable exceeds 100 MB")
+        exe.replace(args.dist / exe.name)
+        print(f"{len(data):,} bytes of compressed resources")
 
 if __name__ == "__main__":
     main()

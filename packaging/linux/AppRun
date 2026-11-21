@@ -18,8 +18,7 @@ for name in $TINGSU_HOST_VARIABLES; do
 done
 export TINGSU_APPIMAGE_RUNTIME=1
 prefix="$base/usr"
-export PYTHONHOME="$prefix" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH="$prefix/lib/tingsu/python:$prefix/lib/python3/dist-packages"
+export TINGSU_BUNDLE="$prefix/share/tingsu"
 export LD_LIBRARY_PATH="$prefix/lib/tingsu/native${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 if [ -x /sbin/ldconfig ]; then ldcache=$(/sbin/ldconfig -p 2>/dev/null || :); else ldcache=""; fi
 for directory in "$prefix"/lib/tingsu/graphics-fallback/*; do
@@ -32,7 +31,6 @@ for arg in "$@"; do
 done
 export ALSA_CONFIG_DIR="$prefix/share/alsa"
 export PATH="$prefix/bin:$PATH"
-export GI_TYPELIB_PATH="$prefix/lib/tingsu/typelib"
 export GST_PLUGIN_SYSTEM_PATH_1_0="$prefix/lib/tingsu/gstreamer" GST_PLUGIN_PATH_1_0=""
 export GST_PLUGIN_SCANNER_1_0="$prefix/lib/tingsu/gst-plugin-scanner"
 export PIPEWIRE_MODULE_DIR="$prefix/lib/tingsu/pipewire" SPA_PLUGIN_DIR="$prefix/lib/tingsu/spa"
@@ -40,4 +38,4 @@ export PIPEWIRE_CONFIG_DIR="$prefix/share/pipewire"
 export PULSE_CONFIG_PATH="$prefix/share/tingsu/pulse"
 # Keep user and system directories available to XDG portals and desktop themes.
 export XDG_DATA_DIRS="$prefix/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-exec "$prefix/bin/python3.10" -sB "$prefix/lib/tingsu/start.py" "$@"
+exec "$prefix/bin/tingsu" "$@"

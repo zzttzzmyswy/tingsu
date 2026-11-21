@@ -1,8 +1,15 @@
 #!/bin/sh
+# Launch the Go backend and the native Linux WebKit host from a source checkout.
 set -eu
-app_dir=$(dirname "$(readlink -f "$0")")
-cd "$app_dir"
-if [ -x "$app_dir/.venv/bin/python" ]; then
-    exec "$app_dir/.venv/bin/python" -m meeting_agent "$@"
+project=$(dirname "$(readlink -f "$0")")
+cd "$project"
+export TINGSU_BUNDLE="$project/meeting_agent"
+export TINGSU_DESKTOP_HOST="${TINGSU_DESKTOP_HOST:-$project/build/tingsu-webview}"
+export TINGSU_APP_DIR="${TINGSU_APP_DIR:-$project}"
+export PATH="$project/build:$PATH"
+if [ ! -x "$TINGSU_DESKTOP_HOST" ]; then
+    mkdir -p "$project/build"
+    "$project/desktop/linux/build.sh" "$TINGSU_DESKTOP_HOST"
 fi
-exec python3 -m meeting_agent "$@"
+go build -trimpath -o "$project/build/tingsu" ./cmd/tingsu
+exec "$project/build/tingsu" "$@"

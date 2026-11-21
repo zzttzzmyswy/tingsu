@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from PySide6.QtGui import QImage
+import json
 
 from meeting_agent.capture import AudioCapture, AudioSource, extract_video_frame
 
@@ -61,9 +61,13 @@ class CaptureTests(unittest.TestCase):
             for seconds, expected in ((0, (240, 20, 20)), (3.95, (20, 20, 240))):
                 with self.subTest(seconds=seconds):
                     path = extract_video_frame(movie, seconds, folder / "frame.jpg")
-                    frame = QImage(str(path))
-                    self.assertEqual((frame.width(), frame.height()), size)
-                    actual = frame.pixelColor(48, 32).getRgb()[:3]
+                    stream = json.loads(subprocess.check_output(
+                        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
+                         "-of", "json", str(path)]))["streams"][0]
+                    self.assertEqual((stream["width"], stream["height"]), size)
+                    actual = subprocess.check_output(
+                        ["ffmpeg", "-v", "error", "-i", str(path), "-vf", "scale=1:1",
+                         "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"])
                     for obtained, wanted in zip(actual, expected):
                         self.assertAlmostEqual(obtained, wanted, delta=8)
 

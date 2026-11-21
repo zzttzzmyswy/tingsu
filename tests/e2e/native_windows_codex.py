@@ -17,36 +17,38 @@ from desktop import Page
 from codex_file_fixture import WorkspaceFixture
 
 
-def choose_attachment(path):
-    # UI Automation reaches the native file picker even on a non-interactive CI desktop.
-    script = """
-    Add-Type -AssemblyName UIAutomationClient
-    $element = [Windows.Automation.AutomationElement]
-    $scope = [Windows.Automation.TreeScope]::Descendants
-    $name = New-Object Windows.Automation.PropertyCondition($element::NameProperty, '添加会议材料')
-    $fileId = New-Object Windows.Automation.PropertyCondition($element::AutomationIdProperty, '1148')
-    $openId = New-Object Windows.Automation.PropertyCondition($element::AutomationIdProperty, '1')
-    $edit = New-Object Windows.Automation.PropertyCondition($element::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    while ([DateTime]::UtcNow -lt $deadline) {
-      $dialog = $element::RootElement.FindFirst($scope, $name)
-      if ($dialog) {
-        $combo = $dialog.FindFirst($scope, $fileId)
-        $open = $dialog.FindFirst($scope, $openId)
-        if ($combo -and $open) {
-          $field = $combo.FindFirst($scope, $edit)
-          if (!$field) { $field = $combo }
-          $field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue($env:QA_ATTACHMENT)
-          $open.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
-          exit 0
-        }
-      }
-      Start-Sleep -Milliseconds 200
-    }
-    throw 'Native attachment picker was unavailable'
-    """
-    subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script], check=True, timeout=45,
-                   env={**os.environ, "QA_ATTACHMENT": str(path)})
+def choose_attachment(path, title="添加会议材料"):
+    import ctypes
+    from ctypes import wintypes as wt
+    import time
+
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.FindWindowW.argtypes = [wt.LPCWSTR, wt.LPCWSTR]
+    user.FindWindowW.restype = wt.HWND
+    user.GetDlgItem.argtypes = [wt.HWND, ctypes.c_int]
+    user.GetDlgItem.restype = wt.HWND
+    user.FindWindowExW.argtypes = [wt.HWND, wt.HWND, wt.LPCWSTR, wt.LPCWSTR]
+    user.FindWindowExW.restype = wt.HWND
+    user.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    user.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    until = time.monotonic() + 30
+    while time.monotonic() < until:
+        dialog = user.FindWindowW("#32770", title)
+        if dialog:
+            # Explorer-style OPENFILENAME uses cmb13; classic layouts use edt1.
+            combo = user.GetDlgItem(dialog, 1148)
+            inner = user.FindWindowExW(combo, None, "ComboBox", None) if combo else None
+            field = (user.FindWindowExW(inner or combo, None, "Edit", None) if combo else None) or user.GetDlgItem(dialog, 1152)
+            button = user.GetDlgItem(dialog, 1)
+            if field and button:
+                value = ctypes.create_unicode_buffer(str(path))
+                if not user.SendMessageW(field, 0x000C, 0, ctypes.addressof(value)):
+                    raise RuntimeError("Windows rejected the selected file name")
+                if not user.PostMessageW(button, 0x00F5, 0, 0):
+                    raise RuntimeError("Cannot confirm the attachment picker")
+                return
+        time.sleep(0.15)
+    raise RuntimeError("No Windows file-name field in the native attachment picker")
 
 
 @contextmanager
@@ -158,4 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("--app", required=True, type=Path)
     parser.add_argument("--codex", required=True, type=Path)
     args = parser.parse_args()
-    verify(args.app.resolve(strict=True), args.codex.resolve(strict=True))
+    app = args.app.resolve(strict=True)
+    from native_windows_regression import verify_regression
+    verify_regression(app)
+    verify(app, args.codex.resolve(strict=True))

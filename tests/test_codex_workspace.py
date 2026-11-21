@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import subprocess
 from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
@@ -53,6 +54,11 @@ class CodexWorkspaceTests(unittest.IsolatedAsyncioTestCase):
                             inputs = make_inputs("codex", "Read the original file and return its last value",
                                                  attachments, "", workspace=cwd)
                             text = await client.send(sid, inputs, lambda _: None, None)
+                            if os.name == "nt" and text != marker:
+                                from meeting_agent.windows_workspace import _logon_sid
+                                print("Test desktop logon SID:", _logon_sid(), flush=True)
+                                for target in (root, cwd, material.parent, material):
+                                    subprocess.run(["icacls.exe", str(target)], check=False)
                             self.assertEqual(text, marker)
                         finally:
                             await client.close()

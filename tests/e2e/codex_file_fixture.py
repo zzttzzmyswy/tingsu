@@ -56,10 +56,12 @@ class WorkspaceFixture(Fixture):
                 cwd = ",".join(map(str, utf16_units(state.workspace)))
                 command = (
                     f"$w=-join [char[]]({cwd}); $p=-join [char[]]({path}); "
-                    "Set-Location -LiteralPath $w -ErrorAction Stop; 'workspace='+((Get-Location).Path -eq $w); "
+                    "try { Set-Location -LiteralPath $w -ErrorAction Stop; 'workspace='+((Get-Location).Path -eq $w); "
                     "$f=Get-Item -LiteralPath $p -ErrorAction Stop; "
                     "'filename='+(([int[]][char[]]$f.Name) -join ','); "
-                    "Get-Content -LiteralPath $f.FullName -Tail 1"
+                    "Get-Content -LiteralPath $f.FullName -Tail 1 -ErrorAction Stop } catch { "
+                    "Write-Output $_; whoami.exe /user /fo csv /nh; whoami.exe /logonid; "
+                    "whoami.exe /groups /fo csv /nh | Select-String 'S-1-5-5-|CodexSandbox'; icacls.exe $w }"
                 )
             else:
                 # Exercise an arbitrary host-installed interpreter on an actual CSV.
@@ -79,6 +81,8 @@ class WorkspaceFixture(Fixture):
             if state.platform == "windows":
                 filename = ",".join(map(str, utf16_units(state.filename)))
                 matched = matched and "workspace=True" in str(result) and "filename=" + filename in str(result)
+                if not matched:
+                    print("Synthetic Codex shell diagnostics:", str(result)[:5000], flush=True)
             answer = state.marker if matched else "Native read failed: " + str(result)[:700]
             state.reads += 1
             state.waiting_result = False

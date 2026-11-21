@@ -67,15 +67,18 @@ func Prepare() error {
 		return err
 	}
 	dir := filepath.Join(parent, hex.EncodeToString(footer[:32]))
+	archive, err := zip.NewReader(payload, length)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		archive, err := zip.NewReader(payload, length)
-		if err != nil {
-			return err
-		}
 		if err := install(archive, parent, dir); err != nil {
 			return err
 		}
 	} else if err != nil {
+		return err
+	}
+	if err := verifyComponents(archive, dir); err != nil {
 		return err
 	}
 	if os.Getenv("TINGSU_APP_DIR") == "" {
@@ -88,6 +91,43 @@ func Prepare() error {
 	os.Setenv("TINGSU_HOST_PATH", os.Getenv("PATH"))
 	os.Setenv("TINGSU_HOST_VARIABLES", "PATH")
 	return os.Setenv("PATH", filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Check app-owned executable components against the verified package even when
+// reusing an existing cache. The separately replaceable FFmpeg libraries are
+// intentionally outside this list.
+func verifyComponents(archive *zip.Reader, dir string) error {
+	for _, name := range []string{"bin/tingsu-webview.exe", "bin/WebView2Loader.dll", "bin/tingsu-host.exe", "bin/tingsu-capture.exe"} {
+		src, err := archive.Open(name)
+		if err != nil {
+			return fmt.Errorf("发行包缺少组件 %s: %w", name, err)
+		}
+		expected, err := digest(src)
+		if err != nil {
+			return fmt.Errorf("无法读取发行包组件 %s: %w", name, err)
+		}
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		file, err := os.Open(path)
+		if err == nil {
+			var actual []byte
+			actual, err = digest(file)
+			if err == nil && bytes.Equal(actual, expected) {
+				continue
+			}
+			if err == nil {
+				err = fmt.Errorf("文件内容与发行包不一致")
+			}
+		}
+		return fmt.Errorf("无法验证运行组件 %s。请查看安全软件的隔离记录。如有拦截，请保留隔离并联系听序或安全软件厂商复核。\n\n文件：%s\n发行包内 SHA-256：%x\n详细信息：%w", name, path, expected, err)
+	}
+	return nil
+}
+
+func digest(r io.ReadCloser) ([]byte, error) {
+	defer r.Close()
+	h := sha256.New()
+	_, err := io.Copy(h, r)
+	return h.Sum(nil), err
 }
 
 func install(archive *zip.Reader, parent, dir string) error {
@@ -106,7 +146,7 @@ func install(archive *zip.Reader, parent, dir string) error {
 			return err
 		}
 		if err := extract(entry, output); err != nil {
-			return err
+			return fmt.Errorf("无法安装组件 %s: %w", name, err)
 		}
 	}
 	if err := os.Rename(stage, dir); err != nil {

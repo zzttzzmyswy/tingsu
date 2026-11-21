@@ -91,7 +91,7 @@ func Run(args []string) error {
 				os.Setenv("TINGSU_CAPTURE_DESKTOP", a[2:])
 			}
 		case "--version":
-			fmt.Println("Tingsu 2.0.0")
+			fmt.Println("Tingsu 2.0.1")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)
@@ -149,7 +149,7 @@ func Run(args []string) error {
 		defer b.close()
 	}
 	if e = c.Start(); e != nil {
-		return e
+		return fmt.Errorf("无法启动界面组件 %s: %w", name, e)
 	}
 	input := make(chan packet, 16)
 	go readPackets(ctx, read, input)

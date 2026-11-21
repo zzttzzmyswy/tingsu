@@ -15,6 +15,8 @@
 
 Linux 桌面需要提供 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或兼容的 4.0；Arch Linux 的引擎包为 `webkit2gtk-4.1`。Windows 缺少 WebView2 时可安装官方 Evergreen Runtime。[Arch Linux 软件包](https://archlinux.org/packages/extra/x86_64/webkit2gtk-4.1/) · [Microsoft 运行时](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 
+Windows 如提示运行组件被隔离，可用发行版校验清单核实下载来源，并查看对应组件的指纹及厂商复核进展。[Windows 启动与安全软件提示](docs/windows-startup.md)
+
 Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage --x11` 或 `--wayland` 明确选择。没有 FUSE 的环境可用同一文件的 `--appimage-extract-and-run` 模式。克隆本仓库后，可以运行 `./install-desktop /path/to/Tingsu-Linux-x86_64.AppImage`，将应用添加到 Linux 桌面菜单。
 
 1. 打开 **录屏资料库**，通过 **添加媒体** 导入音视频，或把文件放入应用程序旁的 `videos/` 目录。选择录屏，填写会议名称和起点。例如从 **05:00** 开始时，转写会沿用原视频的时间轴。

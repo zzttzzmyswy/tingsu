@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/zzttzzmyswy/tingsu/internal/bundle"
 	"github.com/zzttzzmyswy/tingsu/internal/desktop"
-	"os"
 )
 
 func main() {
@@ -14,6 +15,9 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "听序:", err)
+		if len(os.Args) == 1 {
+			showStartupError(err)
+		}
 		os.Exit(1)
 	}
 }

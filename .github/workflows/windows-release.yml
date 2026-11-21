@@ -196,6 +196,11 @@ jobs:
         run: |
           go test ./...
 
+      - name: Check native startup diagnostics with a missing or changed component
+        if: matrix.suite == 'accessibility'
+        shell: pwsh
+        run: python -u tests/e2e/windows_startup_error.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
+
       - name: Create and reopen a meeting with Windows UI Automation
         if: matrix.suite == 'accessibility'
         shell: pwsh

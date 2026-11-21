@@ -116,11 +116,23 @@ for plugin in (
     copy(file, prefix / "gstreamer" / file.name, binary=True)
 scanner = next(Path("/usr/lib").rglob("gst-plugin-scanner"))
 copy(scanner, prefix / "gst-plugin-scanner", binary=True)
-for directory, name in (("pipewire-0.3", "pipewire"), ("spa-0.2", "spa")):
-    root = multiarch / directory
-    for path in root.rglob("*.so"):
-        copy(path, prefix / name / path.relative_to(root), binary=True)
-tree("/usr/share/pipewire", usr / "share/pipewire")
+# The portal is a PipeWire client. Read its two shipped client profiles so
+# their module selections, including optional real-time support, stay in sync.
+modules, spa_plugins = set(), set()
+for name in ("client.conf", "client-rt.conf"):
+    config = Path("/usr/share/pipewire") / name
+    copy(config, usr / "share/pipewire" / name)
+    rules = re.sub(r"#.*", "", config.read_text())
+    modules.update(re.findall(r"\bname\s*=\s*(libpipewire-module-[\w-]+)", rules))
+    spa_plugins.update(re.findall(r"=\s*([\w-]+/libspa-[\w-]+)", rules))
+if "libpipewire-module-protocol-native" not in modules or "support/libspa-support" not in spa_plugins:
+    raise RuntimeError("Unrecognized PipeWire client configuration")
+for module in sorted(modules):
+    file = multiarch / "pipewire-0.3" / (module + ".so")
+    copy(file, prefix / "pipewire" / file.name, binary=True)
+for plugin in sorted(spa_plugins):
+    name = plugin + ".so"
+    copy(multiarch / "spa-0.2" / name, prefix / "spa" / name, binary=True)
 for path in Path("/etc/pulse").glob("*.conf"):
     copy(path, usr / "share/tingsu/pulse" / path.name)
 tree("/usr/share/alsa", usr / "share/alsa")

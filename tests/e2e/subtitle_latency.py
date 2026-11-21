@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import tempfile
 
@@ -13,6 +14,16 @@ from desktop import Page, debug_environment
 def measure(app, recording, backend, provider):
     with tempfile.TemporaryDirectory(prefix="tingsu-first-caption-") as temp:
         root = Path(temp)
+        # AppImage discovers videos relative to the executable. Keep both inputs
+        # under a private launch directory so a user's own media library stays out.
+        binary = root / "measure.AppImage"
+        try:
+            os.link(app, binary)
+        except OSError:
+            shutil.copy2(app, binary)
+        media = root / "videos"
+        media.mkdir()
+        (media / recording.name).symlink_to(recording)
         env = os.environ.copy()
         for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
             folder = root / key
@@ -21,16 +32,16 @@ def measure(app, recording, backend, provider):
         cfg = root / "XDG_CONFIG_HOME/tingsu"
         cfg.mkdir()
         (cfg / "settings.json").write_text(json.dumps({"provider": provider}))
-        env["TINGSU_APP_DIR"] = str(recording.parent.parent)
+        env["TINGSU_APP_DIR"] = str(root)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         env.update(debug_environment(port))
-        with subprocess.Popen([app, "--" + backend], env=env) as process:
+        with subprocess.Popen([binary, "--" + backend], env=env) as process:
             try:
                 p = Page(port)
                 try:
-                    p.until("S.media?.some(m=>m.path===" + json.dumps(str(recording)) + ")")
+                    p.until("S.media?.some(m=>m.title===" + json.dumps(recording.stem) + ")")
                     p.click("library")
                     p.click("media", recording.stem)
                     p.field("#meeting-name", "首条字幕测试")
@@ -63,7 +74,7 @@ def measure(app, recording, backend, provider):
 if __name__ == "__main__":
     a = argparse.ArgumentParser(description=__doc__)
     a.add_argument("--app", required=True, type=Path)
-    a.add_argument("--recording", required=True, type=Path, help="a file under an isolated videos/ directory")
+    a.add_argument("--recording", required=True, type=Path, help="the same speech recording for both versions")
     a.add_argument("--backend", choices=["x11", "wayland"], default="x11")
     a.add_argument("--provider", choices=["siliconflow", "sophnet"], default="siliconflow")
     a.add_argument("--repeat", type=int, default=3)

@@ -34,3 +34,13 @@ py -3 tests/windows/host_cli.py
 ```
 
 脚本还检查参数中的引号与结尾反斜线、UTF-8 标准输入、退出码，以及启动器恢复 DLL 搜索目录的行为。使用 `--launcher 路径` 可以指定从发行版提取的 tingsu-host.exe。
+
+
+## 从最终 EXE 验证单应用音频转写
+
+在有播放端点的 Windows build 20348 或更高版本中，先按上面的命令构建音调发生器。然后在仓库根目录运行以下命令。驱动器启动两个独立的发声进程，通过桌面协议选择其中一个，检查单文件应用上传到本地模拟 ASR 的 WAV、返回的字幕和正常收尾；全程使用临时工作区。
+
+```powershell
+go build -o "$env:TEMP/audioflow.exe" ./tests/windows/audioflow
+& "$env:TEMP/audioflow.exe" (Resolve-Path dist/Tingsu-Windows-x86_64.exe) "$env:TEMP/tingsu-native-qa.exe"
+```

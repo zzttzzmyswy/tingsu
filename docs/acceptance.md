@@ -2,6 +2,29 @@
 
 本页记录各版单文件应用的实测覆盖。下载对应版本的可执行文件并用同版本的 SHA-256 清单核对，放入源码树的 `dist/` 即可复用成品测试。[发行版本](https://github.com/zzttzzmyswy/tingsu/releases)
 
+## v2.0.0 Go 后端
+
+以下数字来自最终的 x86_64 单文件。两包均已解开检查 Go 构建信息、共用工作台和本机助手，排除了 Python 解释器、标准库和内嵌 Agent。Go 后端通过 `go test -race -count=1 ./...` 和 `go vet ./...`。Windows 原生环境也运行了 Go 服务测试。[Windows 验收运行](https://github.com/zzttzzmyswy/tingsu/actions/runs/44896083417)
+
+### 字幕首字延迟
+
+同一段合成语音、同一在线 SiliconFlow 说话人分离模型、默认分片长度 12 秒。每次新建独立配置并从头实时播放 WAV。计时始于用户点击「创建并开始」，止于界面生成第一条非空发言并经过浏览器绘制。ASR 接口按片返回文本，首字和首条字幕同时可见。每格列出三次实测值，单位为秒。[GUI 计时脚本](../tests/e2e/subtitle_latency.py)
+
+| 原生桌面 | v1.4.0 三次 | v2.0.0 三次 | 中位数变化 |
+| --- | --- | --- | --- |
+| X11 / WebKitGTK | 20.570、13.872、14.291 | 6.224、6.205、7.337 | 14.291 → 6.224，缩短 56.45% |
+| Wayland / WebKitGTK | 13.741、13.774、13.911 | 6.153、6.196、6.134 | 13.774 → 6.153，缩短 55.33% |
+
+新版本从首段语音第 3 秒起寻找停顿，默认最长等到第 6 秒切分。后续继续使用设置的长度。Wayland 交替运行两个版本，X11 按版本分组运行。结果包含上传、服务排队和推理延迟，不能单独归因于语言迁移。
+
+### 桌面回归范围
+
+- **Linux 成品**通过 15 组 GUI 端到端测试。Wayland 实际授权选窗、切换幻灯、Agent 识图、采集进程中断重连，XWayland 选择实际腾讯会议窗口。X11 验证选窗、导入录屏、原生文件对话框、发附件、导出 Markdown。PipeWire 和 PulseAudio 使用同时发声的两个应用检查隔离，ALSA 检查跨分片的 PCM 与源音频逐字节一致。另在 Ubuntu 22.04 / WebKitGTK 4.0 运行了最终 AppImage。[Wayland](../tests/e2e/wayland_window.py) · [双应用声音](../tests/e2e/linux_streams.py) · [ALSA](../tests/e2e/alsa_device.py)
+- **会议与 Agent**覆盖两个主题各五次会议、原会话续接、共享看板、开场提醒去重、消息排队、取消和持久化。独立测试分别使用在线 ASR、真实本机 CLI 与本地模型协议端点，覆盖 Codex、Claude Code、DeepSeek Harness 及 OpenAI Conversations。真实会议录屏抽测在 300.630–335.710 秒内得到 8 段转写及 4 个系统生成的说话人标签，人工身份数未标注。[主题回归](../tests/e2e/meeting_topics.py) · [看板](../tests/e2e/topic_board.py)
+- **Windows Server 2025** 使用发布 EXE 和系统 WebView2，六组原生测试全部通过。UI Automation 创建会议、正常退出并重开；工作台、跨会看板和系统 Codex 实际读写流程分别验收。音频测试通过原生对话框导入 WAV，故意令本地 ASR 失败，重启后重试并在 GUI 核对两位发言人及时间戳。实际窗口采集还校验了遮挡、刷新和失效句柄。该托管运行器没有默认播放端点。[UI Automation](https://github.com/zzttzzmyswy/tingsu/actions/runs/44896083417/job/136821954229) · [Windows 转写与重试](https://github.com/zzttzzmyswy/tingsu/actions/runs/44896083417/job/136821954198) · [Windows 原生窗口与 Go 服务](https://github.com/zzttzzmyswy/tingsu/actions/runs/44896083417/job/136821954208)
+
+- **Windows 11 PE build 26100.5067** 在隔离的 KVM 中提供可用的 HDA 播放端点。两个 Windows 原生进程同时播放 749 Hz 和 1439 Hz 时，最终 EXE 选择第一进程，将 96,000 个 16 kHz 样点发到本地 ASR 验收服务。测得目标音调幅度 4155.26，另一进程为 0.31，转写返回到桌面管道，停止录制并正常退出。此用例以协议驱动器代替窗口，原生 WebView2 在前面的 Server 2025 套件中单独验收。另以成品提取的采集助手分别实测两路进程回环、含两路声音的系统回环和被遮挡窗口的连续取帧。[Windows 音频链路测试](../tests/windows/audioflow/main_windows.go) · [原生双音源与画面测试](../tests/windows/acceptance.cpp)
+
 ## v1.4.0 原生桌面窗口与附件工作目录
 
 - 新版 Linux AppImage 在原生 Wayland 和 X11 下分别启动。Wayland 通过门户选窗和逐帧校验，终止采集进程后重新选窗也能恢复。在断网的 Ubuntu 22.04、系统提供旧版 WebKitGTK 4.0 的环境，另行验证了 X11 会议界面、SQLite 初始化与正常退出，以及 Weston 下的窗口通信和文件对话框。另一次从真实腾讯会议的 XWayland 登录窗口采到 377 × 670 画面。腾讯会议在通话中的远端画面仍需实机验证。[门户采集测试](../tests/e2e/wayland_window.py) · [XWayland 测试](../tests/e2e/xwayland_capture.py)

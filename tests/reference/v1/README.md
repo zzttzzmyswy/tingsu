@@ -6,5 +6,5 @@
 
 ```sh
 python3 -m pip install -r requirements.txt
-PYTHONPATH=. python3 -m unittest discover -s tests
+PYTHONPATH=.:../.. python3 -m unittest discover -s tests
 ```

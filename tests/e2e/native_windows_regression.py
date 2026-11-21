@@ -6,13 +6,12 @@ from io import BytesIO
 import os
 from pathlib import Path
 import struct
-from tempfile import TemporaryDirectory
 from threading import Event, Thread
 
 from PIL import Image
 from desktop import wait
 from meeting_topics import TOPICS
-from native_windows_codex import choose_attachment, desktop
+from native_windows_codex import choose_attachment, desktop, windows_profile_directory
 from queued_turns import SlowModel, check as check_turns
 from topic_board import BoardModel, board_flow
 from workspace_tools import check as check_workspace, seed
@@ -74,7 +73,7 @@ def media_flow(page, root):
 
 
 def verify_workspace(app):
-    with TemporaryDirectory(prefix="tingsu-webview2-workspace-") as temp:
+    with windows_profile_directory(prefix="tingsu-webview2-workspace-") as temp:
         root = Path(temp)
         env = profile(root)
         seed(Path(env["LOCALAPPDATA"]) / "Tingsu")
@@ -93,7 +92,7 @@ def verify_workspace(app):
 
 
 def verify_board(app):
-    with TemporaryDirectory(prefix="tingsu-webview2-board-") as temp:
+    with windows_profile_directory(prefix="tingsu-webview2-board-") as temp:
         root = Path(temp)
         env = profile(root)
         with ThreadingHTTPServer(("127.0.0.1", 0), BoardModel) as model:

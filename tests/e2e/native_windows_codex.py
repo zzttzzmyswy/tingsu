@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
+import time
 import socket
 import subprocess
 import sys
@@ -16,6 +18,24 @@ from urllib.request import urlopen
 
 from desktop import Page
 from codex_file_fixture import WorkspaceFixture
+
+
+@contextmanager
+def windows_profile_directory(**kwargs):
+    folder = tempfile.mkdtemp(**kwargs)
+    try:
+        yield folder
+    finally:
+        # WebView2 can still hold its LevelDB lock while the browser process flushes.
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                shutil.rmtree(folder)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.25)
 
 
 def choose_save_path(path, window):
@@ -232,7 +252,7 @@ def running_desktop(app, root, env, port):
 def verify(app, codex):
     if sys.platform != "win32":
         raise RuntimeError("A native Windows runner is required")
-    with tempfile.TemporaryDirectory(prefix="听序 Windows 会议 ", dir=Path.home()) as profile:
+    with windows_profile_directory(prefix="听序 Windows 会议 ", dir=Path.home()) as profile:
         root = Path(profile)
         home = root / "codex-profile"
         home.mkdir()

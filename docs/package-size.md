@@ -21,7 +21,7 @@ v1.3.0 改用系统安装的 Codex、Claude Code 和 DeepSeek Harness。下载 L
 
 ## v1.2.0 体积基线
 
-Linux AppImage 下载为 **463.9 MiB**，Windows EXE 为 **449.6 MiB**。两端最大的开销都是内置的 Codex 和绘制工作台所用的 Qt/PySide。两项合计占 Linux 下载的 **65%**、Windows 下载的 **80%**。语音识别由在线服务完成。Linux 成品里听序自己的 Python 源码和界面文件展开后共 **0.30 MiB**。[工作台入口](../meeting_agent/__main__.py) · [Qt WebEngine 架构](https://doc.qt.io/qt-6/qtwebengine-overview.html)
+Linux AppImage 下载为 **463.9 MiB**，Windows EXE 为 **449.6 MiB**。两端最大的开销都是内置的 Codex 和绘制工作台所用的 Qt/PySide。两项合计占 Linux 下载的 **65%**、Windows 下载的 **80%**。语音识别由在线服务完成。Linux 成品里听序自己的 Python 源码和界面文件展开后共 **0.30 MiB**。[工作台入口](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/meeting_agent/__main__.py) · [Qt WebEngine 架构](https://doc.qt.io/qt-6/qtwebengine-overview.html)
 
 ## 在两个发行文件上测到什么
 

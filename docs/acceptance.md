@@ -6,8 +6,8 @@
 
 - 新版 Linux AppImage 在原生 Wayland 和 X11 下分别启动。Wayland 通过门户选窗和逐帧校验，终止采集进程后重新选窗也能恢复。在断网的 Ubuntu 22.04、系统提供旧版 WebKitGTK 4.0 的环境，另行验证了 X11 会议界面、SQLite 初始化与正常退出，以及 Weston 下的窗口通信和文件对话框。另一次从真实腾讯会议的 XWayland 登录窗口采到 377 × 670 画面。腾讯会议在通话中的远端画面仍需实机验证。[门户采集测试](../tests/e2e/wayland_window.py) · [XWayland 测试](../tests/e2e/xwayland_capture.py)
 - 两个应用同时播放不同语音时，PipeWire 和 PulseAudio 分别只转写被选中的一路。ALSA 虚拟输入也经过转写。真实会议录屏抽测的 300.630 到 335.199 秒识别出 2 位说话人、5 段发言。Linux GUI 流程覆盖 Sophnet、SiliconFlow 在线识别、主动分析、失败重试、停止与排队、通过系统对话框添加附件和导出 Markdown。[音频隔离](../tests/e2e/linux_streams.py) · [录屏抽测](../tests/e2e/recording.py) · [桌面流程](../tests/e2e/desktop.py)
-- 在两个主题各开五场会议，检查从首场继承的问题、提醒、解决状态和另一主题的隔离。另用 v1.3.0 的真实 GUI 添加材料并建立会话，再用 v1.4.0 打开同一配置。即使原文件已经删除，原会议和会话仍可恢复，系统 Claude 的工作目录里也有逐字节相同的材料。[主题回归](../tests/e2e/topic_board.py) · [附件迁移与隔离](../tests/test_workspace_materials.py)
-- 系统 Codex、两个版本的 Claude Code 和 DeepSeek Harness 从工作目录按路径读取附件。长文和表格测试以文件末尾或指定单元格中的随机内容校验实际读取结果。回归分别覆盖真实外部 CLI、本地模型协议端点及在线服务。[Codex 读文件](../tests/test_codex_workspace.py) · [Claude 文件工具](../tests/test_claude.py) · [Harness 文件工具](../tests/test_deepseek.py)
+- 在两个主题各开五场会议，检查从首场继承的问题、提醒、解决状态和另一主题的隔离。另用 v1.3.0 的真实 GUI 添加材料并建立会话，再用 v1.4.0 打开同一配置。即使原文件已经删除，原会议和会话仍可恢复，系统 Claude 的工作目录里也有逐字节相同的材料。[主题回归](../tests/e2e/topic_board.py) · [附件迁移与隔离](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_workspace_materials.py)
+- 系统 Codex、两个版本的 Claude Code 和 DeepSeek Harness 从工作目录按路径读取附件。长文和表格测试以文件末尾或指定单元格中的随机内容校验实际读取结果。回归分别覆盖真实外部 CLI、本地模型协议端点及在线服务。[Codex 读文件](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_codex_workspace.py) · [Claude 文件工具](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_claude.py) · [Harness 文件工具](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_deepseek.py)
 
 Windows Server 2025 在原生桌面通过系统 WebView2 启动待发布 EXE。辅助功能测试通过系统 UI Automation 创建会议并在重启后读回。另一组测试通过 Windows 原生对话框导入中文文件名的 AVI、核对解码后的像素、将会议导出成 Markdown，并验证了十项工作台交互及排队与取消。另一个独立配置验证两个主题各五场的便签隔离、提醒和状态更新。[Windows 辅助功能](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825337) · [工作台和媒体](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825184) · [主题看板](https://github.com/zzttzzmyswy/tingsu/actions/runs/44888772631/job/136799825206)
 
@@ -15,17 +15,17 @@ Windows 的中文附件专项把同一份最终 EXE 与另外安装的官方 Cod
 
 最终 Linux AppImage 的 16 项端到端测试全部首轮通过，覆盖系统 Agent 原文件读取、主题便签、升级、选窗与音频输入、在线转写和故障恢复。每项测试均核对成品 SHA-256 为 `3aa5333103524c2d054883f3d773cb684a9a3eff4b2cb5fe200b2a21dd39161d`。
 
-Linux 执行单元和集成套件 70 项，其中 69 项通过，专属 Windows 的 Program Files 查找用例转到 Windows Python / Wine 后通过。Windows Python / Wine 还通过工作目录、Office、真实 Claude/DeepSeek CLI 和跨会工具的 20 项集成测试。两份成品均检查了源码与归档的一致性。Windows 包内的 WASAPI 与窗口采集组件与 v1.3.0 成品逐字节相同，详见下方历史采集实测。[Windows 服务测试](../tests/test_local_cli.py) · [打包体积](package-size.md)
+Linux 执行单元和集成套件 70 项，其中 69 项通过，专属 Windows 的 Program Files 查找用例转到 Windows Python / Wine 后通过。Windows Python / Wine 还通过工作目录、Office、真实 Claude/DeepSeek CLI 和跨会工具的 20 项集成测试。两份成品均检查了源码与归档的一致性。Windows 包内的 WASAPI 与窗口采集组件与 v1.3.0 成品逐字节相同，详见下方历史采集实测。[Windows 服务测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_local_cli.py) · [打包体积](package-size.md)
 
 ## v1.3.0 系统 Agent、会议材料与 Wayland 选窗
 
 - Linux AppImage 在 X11 和原生 Wayland 两个桌面连接外部 Codex。通过图形连接面板读取模型列表，指定模型、思考等级和速率，验证真实 CLI 发给回环端点的请求字段，并在应用重启后恢复原会话及参数。在线 Codex 另行完成了会议转写后的主动回复。两个平台包均已检查归档，Codex、Claude Code 和 Harness 由用户安装。[Codex 成品测试](../tests/e2e/external_codex.py)
-- X11 图形界面通过外部 Claude Code 2.0.41、2.1.319 和 DeepSeek Harness 从超过 16 万字符的材料末尾读出合成编号并创建便签，然后重启应用、恢复会话。这三组使用真实 CLI 与本地模型端点。在线 Codex 也从长文末尾读出编号，原文件删除后成功再次读取。材料层另测了 26 MiB 二进制、跨页中文、Office 文档及跨会议隔离。[图形测试](../tests/e2e/local_agents.py) · [材料回归](../tests/test_materials.py)
+- X11 图形界面通过外部 Claude Code 2.0.41、2.1.319 和 DeepSeek Harness 从超过 16 万字符的材料末尾读出合成编号并创建便签，然后重启应用、恢复会话。这三组使用真实 CLI 与本地模型端点。在线 Codex 也从长文末尾读出编号，原文件删除后成功再次读取。材料层另测了 26 MiB 二进制、跨页中文、Office 文档及跨会议隔离。[图形测试](../tests/e2e/local_agents.py) · [材料回归](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_materials.py)
 - Wayland 的 XWayland 选择器从真实腾讯会议客户端登录窗口取得有效画面，另用可控窗口验证颜色更新和窗口关闭。原生 Wayland 门户通过逐像素刷新、采集进程被强制终止后重新选窗，并验证 Claude 读取共享画面、更新便签、重启后恢复会话。本次腾讯会议取帧覆盖登录界面，会议进行中的远端视频仍需实机验证。在 Arch 隔离桌面直接从源码运行时，系统 PipeWire 1.6.11 和 xdg-desktop-portal-wlr 0.8.4 的组合仍出现过门户帧错误；同桌面的发行 AppImage 已通过取帧和恢复测试。[XWayland 测试](../tests/e2e/xwayland_capture.py) · [原生 Wayland 测试](../tests/e2e/wayland_window.py)
 - Linux 的两个单应用播放流在 PipeWire、PulseAudio 下分别得到隔离，ALSA 虚拟麦克风完成转写。录屏从第 5 分钟起点产生了两个发言人的带时间戳记录。Sophnet、SiliconFlow 在线转写以及停止、重试、导出、回复排队和恢复均经过 GUI 回归。[单流隔离](../tests/e2e/linux_streams.py) · [GUI 主流程](../tests/e2e/desktop.py)
 - 实际使用 v1.2.0 AppImage 创建四场主题会议、便签和会话后，v1.3.0 AppImage 在同一测试配置中恢复原有数据。第五场自动续接、提醒首场问题，AI 更新便签后再次重启仍保留完成状态。两个桌面还验证了双主题各五场的隔离。同一轮 57 项单元和集成测试通过。[主题看板测试](../tests/e2e/topic_board.py)
 
-Windows x64 成品在隔离的 Wine 桌面复测。直接选择原生 `codex.exe`，以及手动选择官方 npm 安装的 `codex.cmd`、系统 PATH 缺少 Node 的场景均通过。Claude Code 与 DeepSeek Harness 经本地测试模型读取长附件、建立便签并恢复会话。用 v1.2.0 EXE 写入两个独立测试配置后仅替换为 v1.3.0，验证了升级前已共享和升级后才提升到主题看板的两种便签都能提醒并续接原会话。另通过 Windows 专项的 Program Files 查找测试。[外部 Codex](../tests/e2e/external_codex.py) · [Windows 入口和环境测试](../tests/test_local_cli.py)
+Windows x64 成品在隔离的 Wine 桌面复测。直接选择原生 `codex.exe`，以及手动选择官方 npm 安装的 `codex.cmd`、系统 PATH 缺少 Node 的场景均通过。Claude Code 与 DeepSeek Harness 经本地测试模型读取长附件、建立便签并恢复会话。用 v1.2.0 EXE 写入两个独立测试配置后仅替换为 v1.3.0，验证了升级前已共享和升级后才提升到主题看板的两种便签都能提醒并续接原会话。另通过 Windows 专项的 Program Files 查找测试。[外部 Codex](../tests/e2e/external_codex.py) · [Windows 入口和环境测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_local_cli.py)
 
 在 GitHub 原生 Windows Server 2025 上，工作流下载并校验同一份待发布的单文件 EXE，启动工作台，通过 GUI 连接另外安装的官方 Codex 0.171.0。第一轮收到回环模型回复，正常关闭应用，重新启动后恢复相同的会话 ID 并收到第二轮回复。[原生 Windows 运行记录](https://github.com/zzttzzmyswy/tingsu/actions/runs/44882024703)
 
@@ -33,7 +33,7 @@ Windows x64 成品在隔离的 Wine 桌面复测。直接选择原生 `codex.exe
 
 在 Wayland 和 X11 上分别启动 Linux AppImage，用两个主题交替开五场会议。第一场保存本场和主题便签，包括已完成的卡片。每个主题从第二场到第五场都在连接后收到开场提醒，两主题共八次。中途退出应用再打开，重连本场时提醒没有重复。第五场通过 OpenAI Responses 回环测试服务实际发起工具调用，将首场问题改为已完成，随后通过状态筛选找到它并手动重新打开。测试核对了来源、更新场次及另一主题的卡片状态。[成品桌面测试](../tests/e2e/topic_board.py)
 
-真实 Codex 和在线模型在首场按要求创建主题待办，原线程在第五场未收到用户插话便主动给出含正确事项的提醒。收到签收确认后，Codex 更新了原卡片状态，随后重连未重复提醒。真实 Claude Code 和 DeepSeek Harness 分别经回环测试模型，在续接的会话中通过工具将同主题上一场的卡片置为已完成。46 项单元和集成测试通过，包括关闭自动分析、取消后重试、并发版本冲突，以及提醒生成过程中卡片被解决时丢弃过期回复。[看板存储测试](../tests/test_topic_board.py) · [提醒调度测试](../tests/test_turn_service.py)
+真实 Codex 和在线模型在首场按要求创建主题待办，原线程在第五场未收到用户插话便主动给出含正确事项的提醒。收到签收确认后，Codex 更新了原卡片状态，随后重连未重复提醒。真实 Claude Code 和 DeepSeek Harness 分别经回环测试模型，在续接的会话中通过工具将同主题上一场的卡片置为已完成。46 项单元和集成测试通过，包括关闭自动分析、取消后重试、并发版本冲突，以及提醒生成过程中卡片被解决时丢弃过期回复。[看板存储测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_topic_board.py) · [提醒调度测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_turn_service.py)
 
 实际升级复验使用同一数据目录。先用 v1.1.0 AppImage 建四场主题会议，在首场保存本场便签和会话绑定。关闭旧版、用 v1.2.0 打开并手动共享首场便签，第五场续接原会话后主动提醒了该事项，AI 随后标记完成。再次重启后，首场本场便签的 ID 和正文以及共享卡片的完成状态均得以保留。
 
@@ -43,7 +43,7 @@ Windows x64 EXE 在四个独立 Wine 桌面上通过主题看板十场回归、�
 
 在隔离的 Linux Wayland 和 X11 桌面运行发行 AppImage。用同标题的会议交替参加两个主题各五次，在第六场结束时退出程序再打开。十场会议只创建两个 OpenAI Conversations 会话。测试模型在每场调用历史工具，核对可见的场次 ID、顺序，以及读回的首场聊天内容。测试还覆盖旧独立会议归入主题、查看主题列表和打开旧场次，以及模拟服务端会话丢失后重建其中一个主题、继续另一个主题。[可复跑的桌面测试](../tests/e2e/meeting_topics.py)
 
-40 项单元和集成测试通过，覆盖数据库升级、同主题各供应商独立续接、跨主题访问限制、并发绑定与失败恢复。真实 Codex 在线会话在第二场按原线程 ID 续接，从首场实际转写中取回自动摘录之外的随机编号，给出正确的场次和发言时间。另一个主题有同名会议和不同编号，测试核对了查询结果和回答。Claude Code 与 DeepSeek Harness 使用真实 CLI 连接本地测试模型，验证重启前后可调用同一组历史工具。OpenAI Responses 协议采用本地测试服务。[存储层测试](../tests/test_topics.py) · [连接恢复测试](../tests/test_topic_connections.py) · [AI 工具测试](../tests/test_topic_tools.py)
+40 项单元和集成测试通过，覆盖数据库升级、同主题各供应商独立续接、跨主题访问限制、并发绑定与失败恢复。真实 Codex 在线会话在第二场按原线程 ID 续接，从首场实际转写中取回自动摘录之外的随机编号，给出正确的场次和发言时间。另一个主题有同名会议和不同编号，测试核对了查询结果和回答。Claude Code 与 DeepSeek Harness 使用真实 CLI 连接本地测试模型，验证重启前后可调用同一组历史工具。OpenAI Responses 协议采用本地测试服务。[存储层测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_topics.py) · [连接恢复测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_topic_connections.py) · [AI 工具测试](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_topic_tools.py)
 
 Windows x64 单文件在两个独立的 Wine 桌面分别完成了上述十场主题场景，以及既有十项工作台操作、取消和回复排队。核对了成品中的 23 个 Python 模块、全部界面资源和 1.1.0.0 版本信息。
 
@@ -59,7 +59,7 @@ Windows x64 单文件在两个独立的 Wine 桌面分别完成了上述十场�
 
 这一版将转写队列和 AI 回复调度独立出来，将 SQLite 查询集中到存储层。下列跨平台完整回归基于首次公开发行前的工作版，Linux AppImage 的 SHA-256 为 `77dee944af99cb48064c023b54de0e15809a24dea430a9855598d880ae7735b6`，Windows EXE 的 SHA-256 为 `258f96b7930dccbc4b3deb4eb18b59a8175dec3d285c7f0667c917784ca3352d`。Linux 包中逐字节核对了 29 个 Python 和界面文件。
 
-- 28 项单元和集成测试通过，涵盖说话人、时间戳、会话迁移、工具回执、真实本地 CLI 协议、全文检索、音频失败恢复，以及取消 AI 时保留有效回复。两种服务均能在不加载 Qt 的 Python 进程中导入和测试。[转写服务用例](../tests/test_transcription_service.py) · [回复调度用例](../tests/test_turn_service.py) · [存储检索用例](../tests/test_meetings.py)
+- 28 项单元和集成测试通过，涵盖说话人、时间戳、会话迁移、工具回执、真实本地 CLI 协议、全文检索、音频失败恢复，以及取消 AI 时保留有效回复。两种服务均能在不加载 Qt 的 Python 进程中导入和测试。[转写服务用例](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_transcription_service.py) · [回复调度用例](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_turn_service.py) · [存储检索用例](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_meetings.py)
 - 工作台十项交互验收使用独立配置。合成会议包含 240 段发言与一条 AI 回复，测试覆盖首屏以外的内容、分页、高亮、发言人过滤、引用、制便签、保留草稿、键盘焦点和回看位置。[十项交互脚本](../tests/e2e/workspace_tools.py)
 - **Linux Wayland** 从 AppImage 启动在独立 labwc、PipeWire 和门户桌面，十项交互全部通过。随后由 Sophnet 转写合成录屏，用户尚未发消息时在线 Claude 主动给出分析。通过门户选中测试窗口，刷新前后核对了两帧像素；将截图附给 Claude，它从像素读出随机编号并写入便签。释放共享、终止进程并重开，转写、便签和原会话 ID 均恢复。[Wayland 完整流程](../tests/e2e/wayland_window.py)
 - **Linux X11** 十项交互全部通过，并检查了 820 × 530 的最小窗口布局。真实 Codex、真实 Claude 均与在线 Sophnet 走通用户插话、PDF、截图、便签、导出与重启续会。OpenAI 回环模型配合在线 SiliconFlow 验证重试和 X11 选窗。官方 DeepSeek CLI 配合回环模型验证附件和便签。另对故意停顿的模型流点「停止」，核对部分回复已保存、随后两条用户消息按原顺序收到回复。[会议 GUI 测试](../tests/e2e/desktop.py) · [取消与排队](../tests/e2e/queued_turns.py) · [成品界面截图](workspace.png)
@@ -82,13 +82,13 @@ xvfb-run -a dbus-run-session -- sh -c 'openbox >/dev/null 2>&1 & exec python3 te
 
 本节记录首次交付 Claude Code 和 DeepSeek Harness 时的单文件成品。当时 Linux 包的 SHA-256 为 `c136c58eea7a6c2d074264702f902dc59dd86c43780578774b05f391991df5af`，Windows 包为 `e33c29223bf8a6e031a50746e8d9a63da14de779bc93f07b8391d3e76ae6cd9a`。下节保留了此前版本的完整会议流程验收，包含 Windows 10 原生桌面、Windows 11 PE 采集组件和 Linux。当时测试的 Windows EXE 的 SHA-256 为 `ae50f1a4f8c48a029f5eeb1a4486cd5d8a894a4afa02679d45c02cb7b0e3ebce`。
 
-- **Claude Code** 通过本机已登录的 2.1.319 CLI 提交了真实在线请求。另从外部项目目录用原生 claude 新建会话，然后从听序按 UUID 续接，成功回忆一条只在外部项目说过的合成编号。单独的集成验收让 Claude 读取图片、文字材料和转写中的三个不同编号，创建便签，重开后续接原会话并修改便签。协议回归另验证了取消后的进程回收和未发送首条消息的会话恢复。[Claude 回归](../tests/test_claude.py)
+- **Claude Code** 通过本机已登录的 2.1.319 CLI 提交了真实在线请求。另从外部项目目录用原生 claude 新建会话，然后从听序按 UUID 续接，成功回忆一条只在外部项目说过的合成编号。单独的集成验收让 Claude 读取图片、文字材料和转写中的三个不同编号，创建便签，重开后续接原会话并修改便签。协议回归另验证了取消后的进程回收和未发送首条消息的会话恢复。[Claude 回归](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_claude.py)
 - **自动参会** 在最终 AppImage 中用 Sophnet 转写合成录屏。得到 3 段转写、用户消息仍为 0 时，在线 Claude 主动给出分析并创建 2 张便签。随后通过同一会话发送 PDF 和视频截图，Claude 正确读取两个不同编号并创建第 3 张便签。退出重开后的会话 UUID 与前两次回复一致。
-- **DeepSeek Harness** 使用官方 `dsh 0.2.2-rc.5`。通过实际 ACP、实际会话存储和实际 MCP 调用检索转写、创建便签、重启续聊，核对了支持识图时模型端收到的 PNG 字节，以及纯文字模型拒绝截图的反馈。取消一轮后能在原会话继续。本机缺少 DeepSeek 官方凭据，模型服务使用仅监听回环地址的测试端点。[Harness 回归](../tests/test_deepseek.py) · [测试服务](../tests/e2e/deepseek_fixture.py)
+- **DeepSeek Harness** 使用官方 `dsh 0.2.2-rc.5`。通过实际 ACP、实际会话存储和实际 MCP 调用检索转写、创建便签、重启续聊，核对了支持识图时模型端收到的 PNG 字节，以及纯文字模型拒绝截图的反馈。取消一轮后能在原会话继续。本机缺少 DeepSeek 官方凭据，模型服务使用仅监听回环地址的测试端点。[Harness 回归](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_deepseek.py) · [测试服务](../tests/e2e/deepseek_fixture.py)
 - **Linux 最终 AppImage** 从 GUI 分别通过真实 Claude 和真实 dsh 读取文本附件并建立便签。完整退出并重开后，均成功恢复原供应商和同一会话 ID。同场会议连续切换 Claude → DeepSeek → Claude → DeepSeek，分别核对两个会话 ID。用同一包回归了原有 Codex/Sophnet、OpenAI 协议/SiliconFlow 和 X11 选窗。另在真实 Wayland 门户中共享一张含随机编号的合成幻灯片，通过 GUI 把当前帧附给 Claude。真实账号返回的便签包含该编号，停止共享后门户释放会话。[Wayland 识图验收](../tests/e2e/wayland_window.py)
 - **Windows 最终 EXE** 在两个独立的 Wine 桌面中，用官方 Windows 版 Claude Code 2.1.319 和 dsh 0.2.2-rc.5（Node.js 26.13.1）分别完成上述 GUI 流程，模型端均使用回环测试服务。Windows 原生启动器通过含空格和中文的路径、参数引号、UTF-8 输入、DLL 搜索隔离，以及取消或父进程退出后回收孙进程的检查。从成品逐项检查了业务模块、界面、原生组件和许可。同一 EXE 另通过真实 SiliconFlow 转写及原有 OpenAI 协议回归。[Windows 启动器测试](../tests/windows/host_cli.py)
 - **Windows 10 原生桌面** 在新装的简体中文 Windows 10 21H2（build 19044）中，普通权限用户从含中文和空格的路径启动最终 EXE。同场会议先后接入 Windows 版 Claude Code 和 DeepSeek Harness，经原生文件选择框给两家添加材料。两家都调用工具读取转写、写入自己的便签，并在 GUI 显示回复。来回切换后，分别恢复了各自的会话 ID。确认应用进程全部退出再重开，两张便签仍在，两个供应商都续接了之前的会话并逐一核对了 ID。模型端使用回环测试服务，每家收到 3 次请求，核对了附件文件名、完整正文和两项工具返回值。
-- **存储迁移** 用只保存一条旧绑定的会议库进行升级，依次绑定另两家供应商，重开数据库后分别找回三条关联。其他会议不会获得这些绑定。[持久化回归](../tests/test_meetings.py)
+- **存储迁移** 用只保存一条旧绑定的会议库进行升级，依次绑定另两家供应商，重开数据库后分别找回三条关联。其他会议不会获得这些绑定。[持久化回归](https://github.com/zzttzzmyswy/tingsu/blob/v1.4.0/tests/test_meetings.py)
 
 开发验证曾发现偏好设置刚保存时快速重开连接框可能读到旧的默认服务。界面现在收到后端保存确认才关闭设置，测试同时核对服务名和会话 ID。
 

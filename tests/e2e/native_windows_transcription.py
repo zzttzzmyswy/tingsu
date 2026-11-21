@@ -5,11 +5,10 @@ import os
 import struct
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from threading import Thread
 import wave
 
-from native_windows_codex import choose_attachment, desktop
+from native_windows_codex import choose_attachment, desktop, windows_profile_directory
 from native_windows_regression import profile
 
 
@@ -35,7 +34,7 @@ class Model(BaseHTTPRequestHandler):
 
 
 def verify(app):
-    with TemporaryDirectory(prefix="tingsu-audio-") as tmp, ThreadingHTTPServer(("127.0.0.1", 0), Model) as model:
+    with windows_profile_directory(prefix="tingsu-audio-") as tmp, ThreadingHTTPServer(("127.0.0.1", 0), Model) as model:
         root = Path(tmp)
         source = root / "语音 采集.wav"
         with wave.open(str(source), "wb") as audio:

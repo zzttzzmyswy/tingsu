@@ -25,7 +25,7 @@ SPEAKER = "发言人甲"
 
 
 def seed(folder):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "reference/v1"))
     from meeting_agent import storage
 
     for part in ("data", "config"):

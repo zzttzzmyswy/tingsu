@@ -18,6 +18,46 @@ from desktop import Page
 from codex_file_fixture import WorkspaceFixture
 
 
+def choose_save_path(path, window):
+    # The modern Save dialog exposes its file name as an automation element,
+    # sometimes inside DirectUI rather than a Win32 Edit child of cmb13.
+    script = """
+    $ErrorActionPreference='Stop'
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName System.Windows.Forms
+    $ae=[Windows.Automation.AutomationElement]
+    $dialog=$ae::FromHandle([intptr][long]$env:QA_SAVE_WINDOW)
+    $scope=[Windows.Automation.TreeScope]::Descendants
+    $all=$dialog.FindAll($scope, [Windows.Automation.Condition]::TrueCondition)
+    $edits=@($all | Where-Object {$_.Current.ControlType -eq [Windows.Automation.ControlType]::Edit})
+    $field=$edits | Where-Object {
+      $_.Current.Name -match 'file name|文件名' -or $_.Current.AutomationId -in '1001','1148'
+    } | Select-Object -First 1
+    $save=$all | Where-Object {
+      $_.Current.ControlType -eq [Windows.Automation.ControlType]::Button -and
+      ($_.Current.AutomationId -eq '1' -or $_.Current.Name -in 'Save','保存')
+    } | Select-Object -First 1
+    if ($field -and $save) {
+      $value=$field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+      $value.SetValue($env:QA_SAVE_PATH)
+      $save.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+    } else {
+      # Explorer's File name mnemonic targets the input even when the UIA edit
+      # provider is unavailable. The clipboard preserves the full Unicode string.
+      $keyboard=New-Object -ComObject WScript.Shell
+      if (!$keyboard.AppActivate($dialog.Current.Name)) { throw 'Could not focus the Save dialog' }
+      [Windows.Forms.Clipboard]::SetText($env:QA_SAVE_PATH)
+      [Windows.Forms.SendKeys]::SendWait('%n')
+      [Windows.Forms.SendKeys]::SendWait('^a')
+      [Windows.Forms.SendKeys]::SendWait('^v')
+      [Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    }
+    """
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-STA", "-Command", script], check=True,
+                   env={**os.environ, "QA_SAVE_PATH": str(path), "QA_SAVE_WINDOW": str(window)}, timeout=18)
+
+
 def choose_attachment(path, title="添加会议材料"):
     import ctypes
     from ctypes import wintypes as wt
@@ -64,6 +104,15 @@ def choose_attachment(path, title="添加会议材料"):
     while time.monotonic() < until:
         dialog = user.FindWindowW("#32770", title)
         if dialog:
+            if title == "导出会议记录" and user.IsWindowEnabled(dialog):
+                user.SetForegroundWindow(dialog)
+                choose_save_path(path, dialog)
+                limit = time.monotonic() + 6
+                while time.monotonic() < limit:
+                    if not user.IsWindowVisible(dialog):
+                        return
+                    time.sleep(0.1)
+                raise RuntimeError("Native save dialog did not close: " + str(dialogs()))
             # Explorer-style OPENFILENAME uses cmb13; classic layouts use edt1.
             combo = user.GetDlgItem(dialog, 1148)
             inner = user.FindWindowExW(combo, None, "ComboBox", None) if combo else None

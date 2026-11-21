@@ -54,12 +54,15 @@ class WorkspaceFixture(Fixture):
                 options["workdir"] = state.workspace
                 path = ",".join(map(str, state.path_units))
                 cwd = ",".join(map(str, utf16_units(state.workspace)))
+                relative_units = ",".join(map(str, utf16_units(relative)))
                 command = (
-                    f"$w=-join [char[]]({cwd}); $p=-join [char[]]({path}); "
-                    "try { Set-Location -LiteralPath $w -ErrorAction Stop; 'workspace='+((Get-Location).Path -eq $w); "
+                    f"$w=-join [char[]]({cwd}); $p=-join [char[]]({path}); $r=-join [char[]]({relative_units}); "
+                    "try { Set-Location -LiteralPath $w -ErrorAction Stop; "
                     "$f=Get-Item -LiteralPath $p -ErrorAction Stop; "
                     "'filename='+(([int[]][char[]]$f.Name) -join ','); "
-                    "Get-Content -LiteralPath $f.FullName -Tail 1 -ErrorAction Stop } catch { "
+                    "$line=Get-Content -LiteralPath $f.FullName -Tail 1 -ErrorAction Stop; "
+                    "'workspace='+($line -eq (Get-Content -LiteralPath $r -Tail 1 -ErrorAction Stop)); "
+                    "Write-Output $line } catch { "
                     "Write-Output $_; whoami.exe /user /fo csv /nh; whoami.exe /logonid; "
                     "whoami.exe /groups /fo csv /nh | Select-String 'S-1-5-5-|CodexSandbox'; icacls.exe $w }"
                 )

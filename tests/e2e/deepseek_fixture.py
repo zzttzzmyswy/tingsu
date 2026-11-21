@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from email.parser import BytesParser
 from email.policy import default
 import threading
@@ -72,6 +73,7 @@ class Fixture(BaseHTTPRequestHandler):
         content = msgs[-1].get("content", [])
         results = {block.get("tool_use_id") for block in content if isinstance(block, dict)
                    and block.get("type") == "tool_result"}
+        file_id = re.search(r'"attachments"\s*:\s*\[\s*\{\s*"id"\s*:\s*"([a-f0-9]{64})"', last.replace('\\"', '"'))
         tool = None
         if results:
             # Claude can group both calls in one assistant message and both results in one user message.
@@ -79,9 +81,13 @@ class Fixture(BaseHTTPRequestHandler):
                     and "prior-topic-session" in last):
                 tool = ("read_topic_history", {"meeting_id": "prior-topic-session", "kind": "transcript",
                                                "query": "预算", "offset": 0, "limit": 10})
+            elif "tool_read_attachment" in results and "tool_read_transcript" not in results and "ORCHID-718" in last:
+                tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
             elif ("tool_read_transcript" in results and "tool_create_note" not in results
                     and "ORCHID" in json.dumps(msgs, ensure_ascii=False)):
                 tool = ("create_note", {"kind": "task", "title": "验收行动项", "body": "ORCHID-718"})
+        elif file_id:
+            tool = ("read_attachment", {"id": file_id[1], "format": "text", "query": "ORCHID", "offset": 0, "limit": 500})
         elif "ORCHID" in last:
             tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
         elif "tingsu-recall-topic" in last:

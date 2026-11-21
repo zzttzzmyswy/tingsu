@@ -74,7 +74,7 @@ def verify(app, provider, executable, directory, deepseek_fixture=False, *, wine
     process_ports = {}
     prior_ports = set()
     material = directory / "agenda.txt"
-    material.write_text("本次验收材料的编号是 ORCHID-718。", encoding="utf-8")
+    material.write_text("合成会议记录。" * 30_000 + "本次验收材料的编号是 ORCHID-718。", encoding="utf-8")
 
     with ExitStack() as cleanup:
         if wine:

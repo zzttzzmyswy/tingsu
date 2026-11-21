@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import selectors
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +21,34 @@ BASE = "/org/freedesktop/portal/desktop"
 SCREENCAST = "org.freedesktop.portal.ScreenCast"
 SESSION = "org.freedesktop.portal.Session"
 REQUEST = "org.freedesktop.portal.Request"
+
+
+def desktop_protocol():
+    return (os.environ.get("TINGSU_CAPTURE_DESKTOP") or os.environ.get("XDG_SESSION_TYPE")
+            or ("wayland" if os.environ.get("WAYLAND_DISPLAY") else "x11"))
+
+
+def xwayland_available():
+    return sys.platform.startswith("linux") and desktop_protocol() == "wayland" and bool(os.environ.get("DISPLAY"))
+
+
+def xwayland_windows(*, visible_only=True):
+    """Query the XWayland server for named application windows, excluding frames and helper windows."""
+    if not xwayland_available():
+        raise ValueError("当前桌面没有可用的 XWayland 显示连接。")
+    listing = subprocess.run(["xwininfo", "-root", "-tree"], env={**os.environ, "LC_ALL": "C.UTF-8"},
+                             capture_output=True, timeout=4, check=True).stdout.decode("utf-8", "replace")
+    windows = []
+    for line in listing.splitlines():
+        match = re.match(r'\s*(0x[0-9a-fA-F]+) "(.*)": \("[^"]*" "([^"]+)"\)\s+(\d+)x(\d+)', line)
+        if match and match[2] and min(int(match[4]), int(match[5])) > 1:
+            if visible_only:
+                details = subprocess.run(["xwininfo", "-id", match[1]], env={**os.environ, "LC_ALL": "C"},
+                                         capture_output=True, timeout=3)
+                if b"Map State: IsViewable" not in details.stdout:
+                    continue
+            windows.append({"id": match[1], "title": match[2], "app": match[3]})
+    return windows
 
 
 class _Portal:
@@ -155,7 +186,8 @@ class ScreenCapture:
     """
 
     def __init__(
-        self, on_frame: Callable[[Path], None], on_error: Callable[[str], None], output_dir: Path | str
+        self, on_frame: Callable[[Path], None], on_error: Callable[[str], None], output_dir: Path | str,
+        *, xwindow=None
     ):
         self.on_frame = on_frame
         self.on_error = on_error
@@ -166,7 +198,7 @@ class ScreenCapture:
         self._condition = threading.Condition()
         self._latest = None
         self._finished = False
-        self._window = None
+        self._window = xwindow
         self._thread = threading.Thread(target=self._run, daemon=True, name="meeting-screen")
 
     def start(self) -> None:
@@ -208,6 +240,9 @@ class ScreenCapture:
         ) as dest:
             dest.write(image)
             path = Path(dest.name)
+        self._deliver(path)
+
+    def _deliver(self, path):
         with self._condition:
             self._latest = path
             self._condition.notify_all()
@@ -227,6 +262,10 @@ class ScreenCapture:
             pipeline.use_clock(None)
             source = pipeline.get_by_name("desktop")
             source.set_property("fd", fd)
+            # appsink and the saved latest sample can each hold a buffer. Leave the
+            # compositor room to post new frames while an unchanged slide is cached.
+            if source.find_property("min-buffers"):
+                source.set_property("min-buffers", 5)
             if source.find_property("always-copy"):
                 source.set_property("always-copy", True)
             if serial is not None and source.find_property("target-object"):
@@ -301,15 +340,21 @@ class ScreenCapture:
                     proc.communicate()
 
     def _x11_frames(self):
-        # xwininfo releases its interactive pointer grab when stopped.
-        result = self._x11_command(["xwininfo"])
-        match = re.search(rb"Window id:\s*(0x[0-9a-fA-F]+)", result)
-        if not match:
-            raise RuntimeError("没有选中 X11 窗口。")
-        window = match[1].decode()
+        if self._window:
+            window = self._window["id"]
+        else:
+            # xwininfo releases its interactive pointer grab when stopped.
+            result = self._x11_command(["xwininfo"])
+            match = re.search(rb"Window id:\s*(0x[0-9a-fA-F]+)", result)
+            if not match:
+                raise RuntimeError("没有选中 X11 窗口。")
+            window = match[1].decode()
         while not self._stop.is_set():
             if self._wanted.wait(0.15):
                 self._wanted.clear()
+                if self._window and not any(w["id"] == window and w["app"] == self._window["app"]
+                                            for w in xwayland_windows(visible_only=False)):
+                    raise RuntimeError("所选 XWayland 窗口已关闭或更换，请重新选择会议窗口。")
                 image = self._x11_command(
                     [
                         "ffmpeg",
@@ -342,6 +387,55 @@ class ScreenCapture:
                 if not self._stop.is_set():
                     self._write(image)
 
+    def _portal_worker(self):
+        # Keep native PipeWire/GStreamer plugins and the Qt scene graph in separate processes.
+        # stdin is also a lifetime lease: EOF closes the session if the desktop process disappears.
+        with subprocess.Popen([sys.executable, "-m", "meeting_agent.screen_capture", str(self.output_dir.resolve())],
+                              cwd=Path(__file__).resolve().parent.parent,
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0) as proc:
+            try:
+                self._wanted.clear()  # The worker immediately requests the first image.
+                with selectors.DefaultSelector() as selector:
+                    selector.register(proc.stdout, selectors.EVENT_READ)
+                    while not self._stop.is_set():
+                        if self._wanted.is_set():
+                            self._wanted.clear()
+                            if proc.poll() is None:
+                                proc.stdin.write(b"frame\n")
+                        if not selector.select(0.1):
+                            continue
+                        line = proc.stdout.readline()
+                        if not line:
+                            code = proc.wait(timeout=3)
+                            raise RuntimeError(f"桌面共享进程已退出（{code}），可以重新选择窗口。")
+                        packet = json.loads(line)
+                        if "error" in packet:
+                            raise RuntimeError(packet["error"])
+                        self._deliver(self.output_dir / packet["frame"])
+            finally:
+                proc.stdin.close()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+
+    def _run_portal(self):
+        import gi
+
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gio, GLib, Gst
+
+        Gst.init(None)
+        with ExitStack() as cleanup:
+            context = GLib.MainContext.new()
+            context.push_thread_default()
+            cleanup.callback(context.pop_thread_default)
+            portal = _Portal(Gio, GLib, context, self._stop)
+            cleanup.callback(portal.close)
+            node, serial = portal.select_source()
+            self._portal_frames(Gst, portal, node, serial)
+
     def _run(self):
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -352,30 +446,10 @@ class ScreenCapture:
 
                 capture_windows_frames(self._window, self._stop, self._wanted, self._write)
                 return
-            session_type = (
-                os.environ.get("TINGSU_CAPTURE_DESKTOP")
-                or os.environ.get("XDG_SESSION_TYPE")
-                or ("wayland" if os.environ.get("WAYLAND_DISPLAY") else "x11")
-            )
-            if session_type == "x11" and os.environ.get("DISPLAY"):
+            if self._window or (desktop_protocol() == "x11" and os.environ.get("DISPLAY")):
                 self._x11_frames()
-                return
-            import gi
-
-            gi.require_version("Gst", "1.0")
-            from gi.repository import Gio, GLib, Gst
-
-            Gst.init(None)
-            with ExitStack() as cleanup:
-                if self._stop.is_set():
-                    return
-                context = GLib.MainContext.new()
-                context.push_thread_default()
-                cleanup.callback(context.pop_thread_default)
-                portal = _Portal(Gio, GLib, context, self._stop)
-                cleanup.callback(portal.close)
-                node, serial = portal.select_source()
-                self._portal_frames(Gst, portal, node, serial)
+            else:
+                self._portal_worker()
         except Exception as error:
             if not self._stop.is_set():
                 self.on_error(f"采集画面失败：{error}")
@@ -383,3 +457,29 @@ class ScreenCapture:
             with self._condition:
                 self._finished = True
                 self._condition.notify_all()
+
+def _worker_main(directory):
+    def notify(**packet):
+        print(json.dumps(packet), flush=True)
+
+    worker = ScreenCapture(lambda path: notify(frame=path.name), lambda message: notify(error=message), directory)
+
+    def commands():
+        # Avoid holding Python's buffered stdin lock if a native backend fails during teardown.
+        while os.read(sys.stdin.fileno(), 256):
+            worker.snapshot()
+        worker.stop()
+
+    threading.Thread(target=commands, daemon=True).start()
+    try:
+        worker._run_portal()
+    except InterruptedError:
+        pass
+    except Exception as exc:
+        notify(error=str(exc))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_worker_main(sys.argv[1]))

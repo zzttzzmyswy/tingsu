@@ -1,5 +1,6 @@
 """A loopback Conversations/Responses test server. Accepts only a synthetic credential."""
 
+import base64
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -66,7 +67,8 @@ class Fixture(BaseHTTPRequestHandler):
         task = json.loads(content[0]["text"])["request"]
         if "ORCHID" in task:
             # The code and screenshot must actually enter the request via attachments.
-            if not any("ORCHID-718" in c.get("text", "") for c in content[1:]) or not any(
+            if not any(c["type"] == "input_file" and
+                       b"ORCHID-718" in base64.b64decode(c["file_data"].split(",", 1)[1]) for c in content[1:]) or not any(
                 c["type"] == "input_image" and c["image_url"].startswith("data:image/") for c in content
             ):
                 self.send_error(422)

@@ -3,22 +3,24 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import hashlib
 import threading
 
 import httpx
 
-from .agent_materials import AgentCancelled, AgentError, make_inputs
+from .agent_materials import AgentCancelled, AgentError, MATERIAL_TOOLS, MaterialLibrary, make_inputs
 from .agent_providers import PROVIDERS
+from .runtime import app_directory
 
 
 class AgentClient:
-    def __init__(self, provider, api_key="", model="", executable=""):
+    def __init__(self, provider, api_key="", model="", executable="", *, effort="", speed=""):
         if provider not in PROVIDERS:
             raise AgentError("未知的 Agent 供应商。")
         self.provider = provider
         self.session_id = None
         self._spec = PROVIDERS[provider]
-        self._backend = self._spec.create(api_key, model, executable)
+        self._backend = self._spec.create(api_key, model, executable, effort, speed)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, name="tingsu-agent", daemon=True)
         self._thread.start()
@@ -85,12 +87,20 @@ class AgentClient:
     def list_sessions(self):
         return self._call(self._backend.list_sessions)
 
+    def model_catalog(self):
+        return self._call(self._backend.model_catalog) if self.provider == "codex" else []
+
+    @property
+    def session_options(self):
+        return self._backend.session_options if self.provider == "deepseek" else {}
+
     def open_session(self, session_id=None, title="会议助手"):
         self.session_id = self._call(lambda: self._backend.open_session(session_id, title))
         return self.session_id
 
     def send(
-        self, text, attachments=(), on_delta=None, tool_handler=None, *, context="", cancel_event=None
+        self, text, attachments=(), on_delta=None, tool_handler=None, *, context="", cancel_event=None,
+        material_scope=None, frame=None
     ):
         if not self.session_id:
             raise AgentError("请先创建或选择 Agent 会话。")
@@ -100,11 +110,27 @@ class AgentClient:
         async def send():
             if cancel_event is not None and cancel_event.is_set():
                 raise AgentCancelled("已停止请求。")
-            inputs = await asyncio.to_thread(make_inputs, self._spec.input_format, text, attachments, context)
+            scope = ("meeting:" + material_scope if material_scope else f"session:{self.provider}:{self.session_id}")
+            library = MaterialLibrary(app_directory("data") / "materials" / hashlib.sha256(scope.encode()).hexdigest())
+
+            def prepare():
+                selected = [library.add(path) for path in attachments]
+                return make_inputs(self._spec.input_format, text, selected, context, frame=frame)
+
+            def tool(name, args):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise AgentCancelled("已停止请求。")
+                if name in MATERIAL_TOOLS:
+                    return library.tool(name, args)
+                if tool_handler is None:
+                    raise AgentError("本次请求无法执行该操作")
+                return tool_handler(name, args)
+
+            inputs = await asyncio.to_thread(prepare)
             if cancel_event is not None and cancel_event.is_set():
                 raise AgentCancelled("已停止请求。")
             return await self._backend.send(
-                self.session_id, inputs, on_delta or (lambda _: None), tool_handler
+                self.session_id, inputs, on_delta or (lambda _: None), tool
             )
 
         return self._call(send)

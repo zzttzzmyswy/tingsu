@@ -1,4 +1,8 @@
-# v1.2.0 单文件版的体积
+# 单文件版的体积
+
+v1.3.0 改用系统安装的 Codex、Claude Code 和 DeepSeek Harness。下载 Linux AppImage 为 **294.01 MiB**（308,296,184 字节），Windows EXE 为 **245.77 MiB**（257,708,778 字节）。与 v1.2.0 比较，分别减少 **169.91 MiB（36.6%）** 和 **203.85 MiB（45.3%）**。两端继续随包提供 Qt WebEngine、Python 和音视频运行组件。数字按发布文件实际长度计算。[v1.3.0 单文件和校验清单](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.3.0)
+
+## v1.2.0 体积基线
 
 Linux AppImage 下载为 **463.9 MiB**，Windows EXE 为 **449.6 MiB**。两端最大的开销都是内置的 Codex 和绘制工作台所用的 Qt/PySide。两项合计占 Linux 下载的 **65%**、Windows 下载的 **80%**。语音识别由在线服务完成。Linux 成品里听序自己的 Python 源码和界面文件展开后共 **0.30 MiB**。[工作台入口](../meeting_agent/__main__.py) · [Qt WebEngine 架构](https://doc.qt.io/qt-6/qtwebengine-overview.html)
 
@@ -21,14 +25,14 @@ Linux AppImage 下载为 **463.9 MiB**，Windows EXE 为 **449.6 MiB**。两端�
 
 Codex 行包括 CLI、辅助程序及资源。Qt 行包括 PySide、Shiboken、QtWebEngine 内置 Chromium、平台插件和资源。仅 WebEngine Core 一个动态库，压缩后就有 Linux **73.5 MiB**、Windows **64.7 MiB**。Linux 的 FFmpeg 行只算两个命令及直接的 libav、libsw、libpostproc 库；编解码器的外部依赖列入其他原生库。Windows 的两份 FFmpeg 工具各自静态链接编解码功能。[Linux 组装清单](../packaging/linux/assemble.py) · [Windows 打包清单](../packaging/windows/Tingsu.spec) · [Windows FFmpeg 构建参数](../packaging/sources/windows-ffmpeg-9.1-build.txt)
 
-## 可以怎样缩小
+## 在 v1.2.0 基线上验证的缩减方案
 
 | 优先顺序 | 候选改动与实测规模 | 用户体验和验证成本 |
 |---|---|---|
 | 1. Linux 提高压缩级别 | 用同一套发行文件和同样的 1 MiB 块大小，将 SquashFS 的 Zstandard 12 级调整到 19 级，完整单文件从 **463.93** 降至 **424.66 MiB**，节省 **39.27 MiB（8.5%）**。重新展开后核对了全部 2,043 个文件的路径、权限与 SHA-256。 | 试包在 X11 桌面通过跨五场会议的看板回归。相同主机、同为四线程，单次打包用时从 13.9 秒增至 104.6 秒。正式采用前还应复测 Wayland 与冷启动。 |
 | 2. Windows 共用 FFmpeg 编解码库 | 目前 `ffmpeg.exe` 和 `ffprobe.exe` 合计 **76.8 MiB**。实验中以原版 ffmpeg 为字典，能用 **6.3 MiB** 的差分数据逐字节重建单独占 **38.3 MiB** 的 ffprobe。这个结果说明两者有大量可复用内容。 | 优先验证同等编解码范围的共享 DLL 构建，同时保留转写解码、录屏探测、缩略图和截图。上游的 Full Shared 与当前 Essentials 采用不同功能集，需要对实际 DLL、EXE 和许可证重新计量；差分实验的节省量不能当作共享构建的收益。[上游 Windows 构建说明](https://www.gyan.dev/ffmpeg/builds/) |
 | 3. Windows 缩小 Qt 资源集合 | Chromium 语言资源只保留简体中文、繁体中文和美式英语，按现有归档最多省 **8.5 MiB**。Windows 的 QML 目录另占 **7.6 MiB**，可从确实没有加载的插件和样式开始排查。 | 依次检查原生文件选择器、按键输入、字体回退和渲染。Qt WebEngine Widgets 本身依赖 Qt Quick 场景图，整个 QML/Qt Quick 目录不能作为已验证可删除项。[Qt WebEngine 部署说明](https://doc.qt.io/qt-6/qtwebengine-deploying.html) |
-| 4. 为使用外部 Codex 的用户提供精简版 | 另做一次同参数 Linux 试打包，仅外置 Codex，单文件为 **294.01 MiB**，减少 **169.92 MiB**。Windows 成品中相应文件的压缩条目合计 **203.9 MiB**。 | 完整版继续即装即用。精简版可调用已安装 CLI，或首次选择 Codex 时下载并校验固定版本；需处理首次离线、代理和组件升级。选择 Codex 以后会再次占用这部分本机空间。 |
+| 4. 为使用外部 Codex 的用户提供精简版 | 另做一次同参数 Linux 试打包，仅外置 Codex，单文件为 **294.01 MiB**，减少 **169.92 MiB**。Windows 成品中相应文件的压缩条目合计 **203.9 MiB**。 | v1.3.0 已在两个平台采用系统 CLI 方案，使用用户现有安装。打包构建会排除旧缓存里的 Codex，用户可以独立更新 CLI。 |
 | 5. 复用系统网页引擎 | 在 Windows 将现有 HTML/JS 工作台接到系统 WebView2，在 Linux 接到 WebKitGTK，有机会省去独立 Chromium 运行时。 | 需要重做原生与网页通信、文件对话框和截图集成，并测试不同渲染器、WebView 版本与发行版。WebView2 需处理运行时缺失的安装路径；Linux 需要可用的 WebKitGTK。Qt 总量还包含其他组件，实际节省要用原型测量。[WebView2 分发](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution) · [WebKitGTK 运行依赖](https://webkitgtk.org/reference/webkit2gtk/stable/) |
 
 Linux 的图形兼容库和中文、日文、韩文字体合计占 **68.0 MiB**。瘦客户机、无硬件加速和系统缺少 CJK 字体时会使用这些组件。若做依赖宿主环境的精简版，可将它们设为可选，再在最小安装和软件渲染桌面重测。常规文件去重的空间很少，Linux 打包时已经启用去重；Windows 归档中对内容完全相同的普通条目按 SHA-256 汇总，即使每组只存一份，最多也只省 **0.65 MiB**。

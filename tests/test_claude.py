@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -16,6 +17,7 @@ CLI = r"""
 import json, pathlib, sys, time
 root = pathlib.Path(sys.argv[1])
 args = sys.argv[2:]
+legacy = (root / 'legacy').is_file()
 def emit(packet):
     print(json.dumps(packet), flush=True)
 def read():
@@ -26,14 +28,28 @@ def mcp(method, params):
         'subtype':'mcp_message','server_name':'meeting','message':message}})
     return read()['response']['response']['mcp_response']['result']
 if '--help' in args:
-    print('--safe-mode --system-prompt-snapshot --include-partial-messages')
+    if legacy:
+        print('--input-format --output-format --strict-mcp-config --tools --settings --permission-mode (choices: "default", "plan")')
+        sys.exit(0)
+    print('--input-format --output-format --strict-mcp-config --tools --safe-mode --system-prompt-snapshot --include-partial-messages --name --effort --settings')
+    print('  --permission-mode (choices: "dontAsk")\n  auth  Manage authentication')
     sys.exit(0)
 if 'auth' in args:
-    emit({'loggedIn':True, 'configDirectory':str(root)})
+    assert not legacy
+    emit({'loggedIn':not (root / 'logged-out').exists(), 'configDirectory':str(root)})
     sys.exit(0)
+if (root / 'fail').exists():
+    print('Error: unknown option --broken, API key=SHOULD_NEVER_APPEAR', file=sys.stderr)
+    sys.exit(2)
 assert args[args.index('--tools') + 1] == ''
-assert '--strict-mcp-config' in args and '--safe-mode' in args
-assert args[args.index('--system-prompt-snapshot') + 1] == 'off'
+assert '--strict-mcp-config' in args
+if legacy:
+    assert not any(flag in args for flag in ('--safe-mode', '--system-prompt-snapshot', '--name', '--permission-mode', '--setting-sources'))
+    assert json.loads(args[args.index('--settings') + 1])['disableAllHooks']
+else:
+    assert '--safe-mode' in args
+    assert args[args.index('--system-prompt-snapshot') + 1] == 'off'
+    assert args[args.index('--permission-mode') + 1] == 'dontAsk'
 sid = args[args.index('--resume' if '--resume' in args else '--session-id') + 1]
 path = root / 'projects' / 'test-project' / (sid + '.jsonl')
 assert ('--resume' in args) == path.exists()
@@ -58,7 +74,7 @@ assert set(t['name'] for t in listed) == {
     'list_notes', 'read_transcript', 'create_note', 'update_note', 'delete_note',
     'list_topic_meetings', 'read_topic_history',
     'list_topic_notes', 'create_topic_note', 'update_topic_note', 'set_topic_note_status',
-    'share_note_to_topic', 'delete_topic_note',
+    'share_note_to_topic', 'delete_topic_note', 'list_attachments', 'read_attachment',
 }
 result = mcp('tools/call',{'name':'list_notes','arguments':{}})
 assert json.loads(result['content'][0]['text']) == {'result':['marker']}
@@ -87,6 +103,49 @@ class TestCLI:
 
 
 class ClaudeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_auth_session_resume_and_private_exit_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "meeting_agent.agent_claude.app_directory", return_value=Path(tmp)
+        ), patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tmp}):
+            root = Path(tmp)
+            (root / "legacy").touch()
+            inputs = [{"type": "text", "text": "hello"},
+                      {"type": "image", "url": "data:image/png;base64,eA=="}]
+            sid = None
+            for _ in range(2):
+                agent = ClaudeBackend()
+                agent.cli = TestCLI(root)
+                await agent.connect()
+                # The legacy CLI has no auth subcommand. A native resume must still work.
+                self.assertEqual(len(agent.cli.children), 1)
+                sid = await agent.open_session(sid, "Legacy")
+                self.assertEqual(await agent.send(sid, inputs, lambda _: None,
+                                                  lambda *_: ["marker"]), "answer")
+                await agent.close()
+            (root / "fail").touch()
+            with self.assertRaisesRegex(AgentError, "退出码 2.*启动参数") as failure:
+                await agent.send(sid, inputs, lambda _: None, None)
+            self.assertNotIn("SHOULD_NEVER_APPEAR", str(failure.exception))
+
+    async def test_native_auth_report_and_local_provider_settings(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "meeting_agent.agent_claude.app_directory", return_value=Path(tmp)
+        ), patch.dict(os.environ, {k: "" for k in (
+            "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+            "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+        )}):
+            root = Path(tmp)
+            (root / "logged-out").touch()
+            agent = ClaudeBackend()
+            agent.cli = TestCLI(root)
+            with self.assertRaisesRegex(AgentError, "未登录"):
+                await agent.connect()
+            (root / "settings.json").write_text('{"apiKeyHelper":"my-helper"}')
+            await agent.connect()
+            self.assertEqual(agent.projects, root / "projects")
+            await agent.close()
+
     async def test_native_history_draft_resume_multimodal_tools_and_cancel(self):
         with tempfile.TemporaryDirectory() as tmp, patch(
             "meeting_agent.agent_claude.app_directory", return_value=Path(tmp)

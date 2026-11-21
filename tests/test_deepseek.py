@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from meeting_agent.agent_deepseek import DeepSeekBackend, _MeetingEndpoint
-from meeting_agent.agent_materials import AgentError, make_inputs
+from meeting_agent.agent_materials import AgentError, MaterialLibrary, make_inputs
 from e2e.deepseek_fixture import TOKEN, start
 
 
@@ -79,11 +79,15 @@ class RealDeepSeekTests(unittest.IsolatedAsyncioTestCase):
         png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGUlEQVR4nGN0a3JjIAUwkaR6VMOohiGlAQBtAQEu4WUadAAAAABJRU5ErkJggg==")
         image = self.root / "slide.png"
         image.write_bytes(png)
-        parts = make_inputs("codex", "Read the materials and save a note", [attachment, image], "release at ten")
+        library = MaterialLibrary(self.root / "attachments")
+        parts = make_inputs("codex", "Read the materials and save a note",
+                            [library.add(attachment), library.add(image)], "release at ten")
         calls, deltas = [], []
 
         def tool(name, arguments):
             calls.append((name, arguments))
+            if name == "read_attachment":
+                return library.tool(name, arguments)
             if name == "read_transcript":
                 return [{"text": "meeting transcript read by MCP", "at": 12}]
             return {"id": "synthetic-note", **arguments}
@@ -91,7 +95,7 @@ class RealDeepSeekTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.can_image)
         response = await self.backend.send(sid, parts, deltas.append, tool)
         self.assertEqual(response, "".join(deltas))
-        self.assertEqual([n for n, _ in calls], ["read_transcript", "create_note"])
+        self.assertEqual([n for n, _ in calls], ["read_attachment", "read_transcript", "create_note"])
         self.assertEqual(calls[-1][1]["body"], "ORCHID-718")
         self.assertIn(png, self.api.images_received)
         all_requests = json.dumps(self.api.requests)

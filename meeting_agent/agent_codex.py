@@ -3,12 +3,13 @@
 import asyncio
 import contextlib
 import json
-import os
 import re
 from pathlib import Path
 
 from .agent_materials import AgentCancelled, AgentError
-from .runtime import app_directory, child_options, codex_binary
+from .agent_options import codex_catalog
+from .local_cli import LocalCLI
+from .runtime import app_directory
 from .agent_tools import CODEX_GUIDANCE, CODEX_OUTPUT, execute
 
 
@@ -25,8 +26,10 @@ def _visible_prefix(raw):
 
 
 class CodexBackend:
-    def __init__(self, model):
+    def __init__(self, model, executable="", effort="", speed=""):
         self.model = model
+        self.effort, self.speed = effort, speed
+        self.cli = LocalCLI("codex", executable)
         self.proc = None
         self.reader = None
         self.pending = {}
@@ -38,14 +41,12 @@ class CodexBackend:
     async def connect(self):
         if self.proc and self.proc.returncode is None:
             return
-        executable = codex_binary()
-        if not executable:
-            raise AgentError("找不到 Codex CLI，请先安装并运行 codex login。")
         root = app_directory("data")
         workspace = root / "codex-workspace"
         workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.cwd = str(workspace.resolve())
-        cmd = [executable, "app-server", "--stdio", "-c", 'web_search="disabled"']
+        # stdio is the default, including versions predating the --stdio alias.
+        cmd = ["app-server", "-c", 'web_search="disabled"']
         for feature in (
             "shell_tool",
             "unified_exec",
@@ -57,27 +58,20 @@ class CodexBackend:
             "view_image",
         ):
             cmd += ["-c", f"features.{feature}=false"]
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if not k.startswith(("SOPHNET_", "SILICONFLOW_", "TINGSU_"))
-        }
-        self.proc = await asyncio.create_subprocess_exec(
+        self.proc = await self.cli.spawn(
             *cmd,
             cwd=self.cwd,
-            env=env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             limit=64 * 1024**2,
-            **child_options(),
         )
         self.reader = asyncio.create_task(self._read())
         try:
             await self.rpc(
                 "initialize",
                 {
-                    "clientInfo": {"name": "tingsu", "version": "1.2.0"},
+                    "clientInfo": {"name": "tingsu", "version": "1.3.0"},
                     "capabilities": {"experimentalApi": True},
                 },
             )
@@ -159,6 +153,15 @@ class CodexBackend:
             if not cursor:
                 return rows
 
+    async def model_catalog(self):
+        rows, cursor = [], None
+        while True:
+            page = await self.rpc("model/list", {"limit": 100, "cursor": cursor})
+            rows.extend(page["data"])
+            cursor = page.get("nextCursor")
+            if not cursor:
+                return codex_catalog(rows)
+
     async def open_session(self, session_id, title):
         params = {
             "cwd": self.cwd,
@@ -198,8 +201,13 @@ class CodexBackend:
                 "runtimeWorkspaceRoots": [],
                 "approvalPolicy": "never",
                 "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
-                "effort": "low",
             }
+            if self.model:
+                params["model"] = self.model
+            if self.effort:
+                params["effort"] = self.effort
+            if self.speed:
+                params["serviceTier"] = self.speed
             # A cancellation during turn/start must still collect the new id to interrupt the turn.
             starting = asyncio.create_task(self.rpc("turn/start", params))
             try:
@@ -295,15 +303,13 @@ class CodexBackend:
         raise AgentError("已完成八轮会议工具调用，请继续提问。")
 
     async def close(self):
-        if self.proc is not None and self.proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                self.proc.terminate()
+        if self.proc is not None:
+            # Close stdio first so app-server can finish writing session history.
+            self.proc.stdin.close()
             try:
                 await asyncio.wait_for(self.proc.wait(), 2)
             except asyncio.TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    self.proc.kill()
-                await self.proc.wait()
+                await self.cli.stop(self.proc)
         if self.reader is not None:
             with contextlib.suppress(Exception):
                 await self.reader

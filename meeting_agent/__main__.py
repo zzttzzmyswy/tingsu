@@ -1,5 +1,7 @@
+import faulthandler
 import os
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 if sys.platform.startswith("linux") and "--x11" in sys.argv:
@@ -19,6 +21,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .bridge import Bridge
+from .runtime import app_directory
 from .storage import DATA, private_dir
 
 UI = Path(__file__).resolve().parent / "ui"
@@ -76,9 +79,21 @@ def main():
     if not lock.tryLock(0):
         QMessageBox.information(None, "听序", "同一个本地工作空间已经打开。")
         return 1
-    studio = Studio()
-    studio.show()
-    return app.exec()
+    with ExitStack() as cleanup:
+        # Native faults bypass Python exceptions. Keep the last stack locally so a report can
+        # distinguish a fatal desktop error from a crashed renderer, agent or capture helper.
+        try:
+            path = private_dir(app_directory("cache")) / "desktop-fault.log"
+            if path.exists() and path.stat().st_size > 512 * 1024:
+                path.replace(path.with_suffix(".previous.log"))
+            fault_log = cleanup.enter_context(path.open("ab"))
+            faulthandler.enable(file=fault_log, all_threads=True)
+            cleanup.callback(faulthandler.disable)
+        except OSError:
+            pass
+        studio = Studio()
+        studio.show()
+        return app.exec()
 
 
 if __name__ == "__main__":

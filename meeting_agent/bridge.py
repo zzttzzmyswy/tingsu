@@ -10,11 +10,13 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import QFileDialog
 
 from .agent_providers import PROVIDERS, provider_choices
+from .agent_options import LOCAL_PROVIDERS, preferences
 from .agents import AgentClient, AgentCancelled
 from .asr import ASRConfig
 from .codex_login import CodexLogin
 from .capture import ScreenCapture, extract_video_frame, file_source, list_audio_sources
 from .library import MEDIA, describe, thumbnail
+from .screen_capture import xwayland_available, xwayland_windows
 from .runtime import media_directory
 from .storage import DATA, KINDS, Settings, Store, private_dir, uid
 from .transcription_service import TranscriptionService
@@ -46,7 +48,9 @@ class Bridge(QObject):
         self.library_busy = False
         self.library_changed = False
         self.screen = self.client = None
+        self.screen_windows = {}
         self.agent_status = "offline"
+        self.agent_catalogs = {}
         self.sessions, self.session, self.agent_name = [], "", ""
         self.generation, self.screen_version = 0, 0
         self.turns = TurnService(
@@ -159,6 +163,7 @@ class Bridge(QObject):
             fileSource=Path(snapshot["meeting"]["source"]).is_absolute(),
             settings=self.settings.public(),
             providers=provider_choices(),
+            agentCatalogs=self.agent_catalogs,
             sources=self.sources_for_ui(),
             media=self.media,
             libraryBusy=self.library_busy,
@@ -172,6 +177,7 @@ class Bridge(QObject):
             files=[p.name for p in self.files],
             frame=self.frame_image,
             screen=self.screen_on,
+            xwayland=xwayland_available(),
         )
         self.state.emit(json.dumps(data, ensure_ascii=False))
 
@@ -272,10 +278,23 @@ class Bridge(QObject):
             raise ValueError("未知供应商")
         if "chunk" in values:
             values["chunk"] = max(4, min(45, int(values["chunk"])))
-        if self.client and any(
+        current_options = self.settings.values.get("local_agent_options", {})
+        if "local_agent_options" in a:
+            updated = a["local_agent_options"]
+            if not isinstance(updated, dict) or set(updated) - set(LOCAL_PROVIDERS):
+                raise ValueError("未知的本机 AI 设置")
+            values["local_agent_options"] = {
+                **current_options, **{k: preferences(v) for k, v in updated.items()}
+            }
+        options_changed = (self.agent_name in LOCAL_PROVIDERS and
+                           preferences(current_options.get(self.agent_name)) != preferences(
+                               values.get("local_agent_options", current_options).get(self.agent_name)))
+        if self.client and (options_changed or any(
             k in values and self.settings.values.get(k) != values[k]
             for k in ("agent", "model", "openai_key", self.agent_name + "_path")
-        ):
+        )):
+            if self.turns.sending or self.turns.queued:
+                raise ValueError("请先结束当前 AI 回复，再更改连接设置。")
             self.disconnect_agent()
         self.settings.save(**values)
         self.turns.set_automatic(self.settings.values["auto"])
@@ -480,6 +499,7 @@ class Bridge(QObject):
 
     def stop_screen(self):
         self.screen_version += 1
+        self.screen_windows.clear()
         if self.screen:
             self.screen.stop()
         self.screen = None
@@ -490,10 +510,24 @@ class Bridge(QObject):
         self.stop_screen()
         self.update()
 
+    def cmd_screen_windows(self, a):
+        version = self.screen_version
+        def present(windows):
+            if self.screen_version == version and not self.screen_on:
+                self.screen_windows = {window["id"]: window for window in windows}
+                self.event.emit("screen-windows", json.dumps(windows, ensure_ascii=False))
+        self.work(xwayland_windows, present)
+
     def cmd_screen(self, a):
         if self.screen_on:
             self.cmd_snapshot(a)
             return
+        selected = None
+        if "window" in a:
+            selected = self.screen_windows.get(a["window"])
+            if not selected or not xwayland_available():
+                raise ValueError("请先从 XWayland 窗口列表选择会议窗口。")
+        self.screen_windows.clear()
         self.screen_version += 1
         version = self.screen_version
         self.screen_on = True
@@ -511,7 +545,8 @@ class Bridge(QObject):
             self.post(apply)
 
         self.screen = ScreenCapture(
-            on_frame=frame, on_error=failed, output_dir=private_dir(DATA / "frames" / self.mid)
+            on_frame=frame, on_error=failed, output_dir=private_dir(DATA / "frames" / self.mid),
+            xwindow=selected,
         )
         try:
             self.screen.start()
@@ -549,7 +584,7 @@ class Bridge(QObject):
     def cmd_login(self, a):
         if self.agent_status != "offline":
             raise ValueError("请先断开当前会话")
-        self.login.start()
+        self.login.start(self.settings.values["codex_path"])
         self.agent_status = "login"
         self.update()
 
@@ -578,6 +613,24 @@ class Bridge(QObject):
     def cmd_disconnect(self, a):
         self.disconnect_agent()
 
+    def cmd_codex_models(self, a):
+        path = a.get("path", self.settings.values.get("codex_path", ""))
+        def load():
+            client = AgentClient("codex", executable=path)
+            try:
+                client.connect()
+                return client.model_catalog()
+            finally:
+                client.close()
+
+        def loaded(rows):
+            self.agent_catalogs["codex"] = rows
+            self.publish()
+            self.event.emit("agent-catalog", "codex")
+            self.notice.emit(f"本机 Codex 返回了 {len(rows)} 个模型", "ok")
+
+        self.work(load, loaded)
+
     def cmd_connect(self, a):
         if self.turns.sending:
             raise ValueError("AI 正在回复")
@@ -586,10 +639,16 @@ class Bridge(QObject):
         provider = a.get("provider") or meeting["topic_provider"] or self.settings.values["agent"]
         if provider not in PROVIDERS:
             raise ValueError("未知的 AI 服务")
-        model = self.settings.values["model"] if provider == "openai" else ""
+        saved = self.settings.values.get("local_agent_options", {})
+        opts = preferences(saved.get(provider)) if provider in LOCAL_PROVIDERS else {}
+        if provider in LOCAL_PROVIDERS and "options" in a:
+            opts = preferences(a["options"])
+            if opts != preferences(saved.get(provider)):
+                self.settings.save(local_agent_options={**saved, provider: opts})
         client = AgentClient(
             provider, api_key=self.settings.key("openai") if provider == "openai" else "",
-            model=model, executable=self.settings.values.get(provider + "_path", "")
+            executable=self.settings.values.get(provider + "_path", ""),
+            **(opts or {"model": self.settings.values["model"]})
         )
         generation = self.generation
         self.client, self.agent_name, self.agent_status = client, provider, "connecting"
@@ -649,6 +708,8 @@ class Bridge(QObject):
                 failed(exc)
                 return
             self.session, self.agent_status = session, "ready"
+            if provider == "deepseek" and isinstance(client.session_options, dict):
+                self.agent_catalogs[provider] = client.session_options
             self.turns.bind(mid, client, self.current()["duration"])
             self.update()
             self.event.emit("connected", "")

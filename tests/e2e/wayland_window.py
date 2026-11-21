@@ -112,7 +112,7 @@ def service_binary(name):
     raise FileNotFoundError(name)
 
 
-def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspace_tools=False):
+def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspace_tools=False, worker_crash=False):
     from PIL import Image
     from desktop import Page, make_fixtures, wait
 
@@ -331,6 +331,26 @@ def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspac
             page.until("!S.sending && S.events.some(e=>e.kind==='assistant')", 90)
             print("Claude read the random slide code via the portal frame and saved it in a meeting note", flush=True)
             page.click("screen")
+        if worker_crash:
+            # Match the exact private output directory before injecting a native process failure.
+            candidates = []
+            for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+                try:
+                    args = cmdline.read_bytes().rstrip(b"\0").split(b"\0")
+                except OSError:
+                    continue
+                if (len(args) >= 4 and args[-3:-1] == [b"-m", b"meeting_agent.screen_capture"]
+                        and Path(os.fsdecode(args[-1])).parent == data):
+                    candidates.append(int(cmdline.parent.name))
+            assert len(candidates) == 1, candidates
+            import signal
+            os.kill(candidates[0], signal.SIGKILL)
+            page.until("!S.screen && !S.frame")
+            assert process.poll() is None
+            page.click("screen-on")
+            page.until("document.querySelector('#screen-body .screen-image')?.naturalWidth>0")
+            wait(lambda: check_frame(2, (40, 136, 73)), "recovered slide")
+            print("Desktop survived capture-worker loss and reopened a fresh portal session", flush=True)
         page.click("screen-off")
         page.until(
             "!!document.querySelector('#screen-body [data-action=screen-on]') && !document.querySelector('.screen-image')"
@@ -369,19 +389,26 @@ def main():
     parser.add_argument("--meeting", action="store_true",
                         help="Also transcribe synthetic media with Sophnet, check the proactive reply and restart the app.")
     parser.add_argument("--workspace-tools", action="store_true", help="Exercise all ten workspace changes on Wayland.")
+    parser.add_argument("--worker-crash", action="store_true", help="Kill the private capture process and reselect the window.")
     args = parser.parse_args()
     if args.meeting and not (args.claude_vision and os.getenv("SOPHNET_API_KEY")):
         parser.error("--meeting requires --claude-vision and SOPHNET_API_KEY")
     with tempfile.TemporaryDirectory(prefix="tingsu-wl-") as directory:
         folder = Path(directory)
         try:
-            verify(args.app.resolve(), args.labwc, folder, args.claude_vision, args.meeting, args.workspace_tools)
+            verify(args.app.resolve(), args.labwc, folder, args.claude_vision, args.meeting, args.workspace_tools, args.worker_crash)
         except Exception:
             for path in sorted(folder.glob("*.log")):
                 print(
                     path.name, path.read_text(errors="replace")[-3000:], file=sys.stderr
                 )
             raise
+        finally:
+            # A D-Bus-activated document portal can leave a disconnected private
+            # FUSE mount after its bus exits. Release it before deleting the fixture.
+            documents = folder / "xdg_runtime_dir" / "doc"
+            if f" {documents} " in Path("/proc/self/mountinfo").read_text():
+                subprocess.run(["fusermount3", "-uz", str(documents)], check=True)
     return 0
 
 

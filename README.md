@@ -6,7 +6,7 @@
 
 ## 开始使用
 
-从下表下载与你的平台匹配的单个文件，放到任意目录启动。两个版本均包含 Python、QtWebEngine、FFmpeg、ffprobe、PDF 文字提取和 Codex。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
+从下表下载与你的平台匹配的单个文件，放到任意目录启动。两个版本均包含 Python、QtWebEngine、FFmpeg、ffprobe 和 PDF 文字提取工具。Codex、Claude Code 和 DeepSeek Harness 使用系统中已安装的 CLI。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
 
 | 平台 | 双击启动的文件 |
 | --- | --- |
@@ -59,7 +59,7 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 | PulseAudio 和 PipeWire-Pulse | 支持麦克风、输出监视器、指定播放流。 |
 | ALSA | 直接读取可用采集硬件。若设备被桌面声音服务独占，可选择对应的 PipeWire 或 PulseAudio 音源。 |
 | 录屏和音频文件 | FFmpeg 解码为 16 kHz 单声道 PCM，停止后可从已采集位置继续。 |
-| Wayland 画面 | 使用 XDG ScreenCast Portal 和 PipeWire。可选窗口或显示器的范围由桌面后端决定。 |
+| Wayland 画面 | 使用 XDG ScreenCast Portal 和 PipeWire。若桌面选择器中没有腾讯会议等通过 XWayland 运行的程序，打开「会议画面 → 选择 XWayland 窗口」并选择其窗口。 |
 | X11 画面 | 使用 xwininfo 点选窗口，再用 FFmpeg 抓取该窗口。 |
 | Windows 麦克风与系统声音 | 使用 WASAPI 枚举音频设备，也可录制指定输出设备上的混音。 |
 | Windows 单应用音频 | 在支持进程回环的系统上，单独采集选定应用进程树的声音。微软规定最低系统构建号为 20348，常见桌面系统为 Windows 11。[Microsoft 应用回环文档](https://learn.microsoft.com/en-us/samples/microsoft/windows-classic-samples/applicationloopbackaudio-sample/) |
@@ -78,21 +78,23 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 
 ## AI 会话
 
-- **Codex** 使用内置 CLI 和 app-server，能沿用本机已有的 Codex 登录身份。支持新建会话、列出已有会话、按 ID 续接，以及 ChatGPT 账号登录后的 Codex 使用方式。首次使用可在连接面板点击 **登录 Codex**，根据浏览器提示完成账号授权。[Codex App Server](https://developers.openai.com/codex/app-server/)
+- **Codex** 启动本机安装的 Codex CLI，通过 app-server 通信，能沿用本机已有的 Codex 登录身份。支持新建会话、列出已有会话、按 ID 续接，以及 ChatGPT 账号登录后的 Codex 使用方式。首次使用可在连接面板点击 **登录 Codex**，根据浏览器提示完成账号授权。[Codex App Server](https://developers.openai.com/codex/app-server/)
 - **OpenAI** 使用 Conversations 和 Responses API，需要 OpenAI API 密钥。可创建、接续本机记录的 API 会话，或直接输入已有的 `conv_…` ID。ChatGPT 网页历史由网页版单独管理。[OpenAI 会话状态文档](https://developers.openai.com/api/docs/guides/conversation-state/)
 - **Claude Code** 连接本机安装的 Anthropic CLI。在终端确认 `claude --version` 和 `claude auth status` 可用，未登录时运行 `claude auth login`。听序经标准输入输出收取流式回复，支持发送图片、查询转写、维护便签、选择本机可见的会话或按 UUID 续接。实测版本为 2.1.319，连接时会检查所需选项。[Claude Code 官方 CLI 文档](https://code.claude.com/docs/en/cli-reference)
 - **DeepSeek Harness** 使用 DeepSeek 官方的本地 `dsh acp`。本次验证的 dsh 要求 Node.js 24.9.0 及以上。先准备 Node.js，再安装官方 CLI（例如 `npm install -g @deepseek-ai/dsh`），让其模型路由和身份在当前用户下可用。官方服务可用 `DEEPSEEK_API_KEY` 配置。听序通过 ACP 新建会话、列出和续接可用历史，按 Harness 提交的消息块显示回复。图片输入取决于模型路由报告的能力。实测版本为 0.2.2-rc.5。[DeepSeek 官方项目](https://github.com/deepseek-ai/deepseek-harness) · [CLI 命令参考](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cli-help.md)
 
-两个本地 CLI 均由用户安装。听序会自动寻找 `claude` 或 `dsh`。如果终端能运行而桌面找不到，可在 **偏好设置 → AI 助手** 选择对应服务并填写完整可执行路径。Windows 支持原生 EXE 和官方 npm 的同名 CMD 入口。账号、模型路由和 CLI 会话沿用相应工具的本机配置。进入已有会议后，每个服务都可以分别「继续本会议的会话」，原有 Codex、OpenAI 绑定会自动迁移。
+三个本地 CLI 均由用户安装。听序会自动寻找 `codex`、`claude` 或 `dsh`。如果终端能运行而桌面找不到，可在 **偏好设置 → AI 助手** 选择对应服务并填写完整可执行路径。Windows 支持原生 EXE 和官方 npm 的同名 CMD 入口。账号、模型路由和 CLI 会话沿用相应工具的本机配置。进入已有会议后，每个服务都可以分别「继续本会议的会话」，原有 Codex、OpenAI 绑定会自动迁移。
+
+在 **连接 AI** 或 **偏好设置 → AI 助手** 中可按 CLI 指定模型、思考等级和速率。留空沿用本机配置。Codex 的 **读取本机模型** 会读取已安装版本返回的模型与档位。Claude Code 接受本机模型名称或别名，快速模式受模型和账号资格限制。DeepSeek Harness 从会话读取当前路由提供的选项，速率由路由能力决定。[Claude Code 快速模式](https://code.claude.com/docs/en/fast-mode)
 
 - **会议上下文** 包含近期转写与便签。Agent 可以按关键词、分页读取本场会议的完整转写，并创建、编辑或删除便签。开启自动分析后，有新增发言时会合并触发分析，用户消息优先于待触发的自动分析。
-- **会议材料** 支持文本、Markdown、CSV、DOCX、PPTX、PDF 与常见图片。三个本地 CLI 提取 PDF 文字，OpenAI 支持发送 PDF 原文件。可将扫描页作为图片发送。每次附件合计最多 24 MiB，提取文字上限为 16 万字符。
+- **会议材料** 按本场会议保存所选文件的完整副本。助手可以按文件名和 ID 找回已发送的附件，搜索关键词、跳到末尾或分页阅读文本、DOCX、PPTX 和 PDF，还可按字节读取任意格式的原件。图片使用视觉输入；OpenAI 支持的文档通过原生文件输入发送，Claude Code 支持原生 PDF。超过单次原生传输预算的文件可由助手分段读取。原文件移动、修改或应用重启后，之前发送的版本仍可在原会议中使用。
 
 ## 从源码运行和打包
 
 源码开发使用 Python 3.10+。安装 [requirements.txt](requirements.txt) 并提供 FFmpeg、ffprobe。在 Linux 运行 `./tingsu` 或 `python3 -m meeting_agent`，Windows 运行 `py -m meeting_agent`。源码模式下 Linux 单应用音频依赖 PipeWire 或 PulseAudio 的客户端命令，Wayland 共享画面依赖 PyGObject、GStreamer 和桌面对应的 XDG ScreenCast Portal。Windows 采集组件的源码和构建脚本位于 [windows/native](windows/native/)。
 
-Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。各平台单文件中 Codex、Qt 和媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
+Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。不同版本单文件的组成、Qt 和媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
 
 ## 本机数据与密钥
 

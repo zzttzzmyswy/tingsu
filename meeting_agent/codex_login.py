@@ -1,11 +1,13 @@
 """Browser-based Codex sign-in, with credentials managed by the native CLI."""
 
+import os
 import re
+import signal
 
-from PySide6.QtCore import QObject, QProcess, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 
-from .runtime import codex_binary
+from .local_cli import LocalCLI
 
 
 class CodexLogin(QObject):
@@ -17,12 +19,16 @@ class CodexLogin(QObject):
         self.process = None
         self.url = None
 
-    def start(self):
+    def start(self, executable=""):
         self.stop()
-        executable = codex_binary()
-        if not executable:
-            raise ValueError("未找到 Codex 可执行文件。")
+        cmd, env = LocalCLI("codex", executable).invocation("login")
         process = self.process = QProcess(self)
+        child_env = QProcessEnvironment()
+        for key, value in env.items():
+            child_env.insert(key, value)
+        process.setProcessEnvironment(child_env)
+        if os.name != "nt":
+            process.setUnixProcessParameters(QProcess.UnixProcessFlag.CreateNewSession)
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         partial = bytearray()
 
@@ -51,9 +57,20 @@ class CodexLogin(QObject):
         )
         timeout = QTimer(process)
         timeout.setSingleShot(True)
-        timeout.timeout.connect(process.kill)
+        timeout.timeout.connect(lambda: self._kill(process))
         timeout.start(600_000)
-        process.start(executable, ["login"])
+        process.start(cmd[0], cmd[1:])
+
+    @staticmethod
+    def _kill(process):
+        pid = process.processId()
+        if os.name != "nt" and pid > 0:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.kill()
 
     def open_browser(self):
         if self.url is None or not QDesktopServices.openUrl(self.url):
@@ -63,5 +80,5 @@ class CodexLogin(QObject):
         process = self.process
         self.process, self.url = None, None
         if process is not None and process.state() != QProcess.ProcessState.NotRunning:
-            process.kill()
+            self._kill(process)
             process.waitForFinished(700)

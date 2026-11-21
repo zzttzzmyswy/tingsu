@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .agent_materials import AgentCancelled, AgentError
+from .agent_options import acp_choices
 from .agent_tools import GUIDANCE, TOOLS
 from .local_cli import LocalCLI
 from .meeting_mcp import meeting_mcp_reply
@@ -115,7 +116,9 @@ class _MeetingEndpoint:
 
 
 class DeepSeekBackend:
-    def __init__(self, model="", executable=""):
+    def __init__(self, model="", executable="", effort="", speed=""):
+        self.effort, self.speed = effort, speed
+        self.session_options = {}
         self.model = model
         self.cli = LocalCLI("deepseek", executable)
         self.proc = self.reader = self.profile = self.endpoint = None
@@ -262,22 +265,44 @@ class DeepSeekBackend:
                 result = await self.rpc("session/new", params)
                 session_id = result["sessionId"]
             self.active = session_id
-            if self.model:
-                option = next((opt for opt in result.get("configOptions", []) if opt["id"] == "model"), {})
-                choices = []
-                for group in option.get("options", []):
-                    for choice in group.get("options", [group]):
-                        value = choice["value"]
-                        if self.model in (choice.get("name"), value) or json.loads(value)[1] == self.model:
-                            choices.append(value)
-                if len(choices) != 1:
-                    raise AgentError("无法唯一选择 Harness 模型，请使用模型配置中的完整选项值。")
-                await self.rpc("session/set_config_option", {"sessionId": session_id, "configId": "model", "value": choices[0]})
+            await self._configure(session_id, result.get("configOptions", []))
             return session_id
         except BaseException:
             with contextlib.suppress(Exception):
                 await self._close_session()
             raise
+
+    async def _configure(self, session_id, options):
+        fields = {"model": ("model",), "effort": ("thought_level", "reasoning_effort"),
+                  "speed": ("speed", "service_tier", "serviceTier")}
+        for name, requested in (("model", self.model), ("effort", self.effort), ("speed", self.speed)):
+            if not requested:
+                continue
+            field = next((opt for opt in options if opt.get("id") in fields[name] or
+                          opt.get("category") in fields[name]), None)
+            matches = []
+            for item in acp_choices(field or {}):
+                value = item["value"]
+                aliases = [value, item.get("name")]
+                if name == "model":
+                    with contextlib.suppress(ValueError, TypeError):
+                        pair = json.loads(value)
+                        if isinstance(pair, list) and len(pair) == 2:
+                            aliases.append(pair[1])
+                if requested in aliases:
+                    matches.append(value)
+            if len(matches) != 1:
+                label = {"model": "模型", "effort": "思考等级", "speed": "速率"}[name]
+                raise AgentError(f"Harness 当前路由没有唯一匹配的{label}。请改用本机默认，或选择会话返回的选项。")
+            if matches[0] != field.get("currentValue"):
+                response = await self.rpc("session/set_config_option", {
+                    "sessionId": session_id, "configId": field["id"], "value": matches[0]})
+                options = response.get("configOptions", options)
+        self.session_options = {
+            name: [{"id": item["value"], "label": item.get("name") or item["value"]} for item in acp_choices(opt)]
+            for name, ids in fields.items() for opt in options
+            if opt.get("id") in ids or opt.get("category") in ids
+        }
 
     async def send(self, session_id, inputs, on_delta, handler):
         if session_id != self.active or self.endpoint is None:

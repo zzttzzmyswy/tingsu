@@ -2,6 +2,14 @@
 
 本页记录各版单文件应用的实测覆盖。下载对应版本的可执行文件并用同版本的 SHA-256 清单核对，放入源码树的 `dist/` 即可复用成品测试。[发行版本](https://github.com/zzttzzmyswy/tingsu/releases)
 
+## v1.3.0 系统 Agent、会议材料与 Wayland 选窗
+
+- Linux AppImage 在 X11 和原生 Wayland 两个桌面连接外部 Codex。通过图形连接面板读取模型列表，指定模型、思考等级和速率，验证真实 CLI 发给回环端点的请求字段，并在应用重启后恢复原会话及参数。在线 Codex 另行完成了会议转写后的主动回复。两个平台包均已检查归档，Codex、Claude Code 和 Harness 由用户安装。[Codex 成品测试](../tests/e2e/external_codex.py)
+- X11 图形界面通过外部 Claude Code 2.0.41、2.1.319 和 DeepSeek Harness 从超过 16 万字符的材料末尾读出合成编号并创建便签，然后重启应用、恢复会话。这三组使用真实 CLI 与本地模型端点。在线 Codex 也从长文末尾读出编号，原文件删除后成功再次读取。材料层另测了 26 MiB 二进制、跨页中文、Office 文档及跨会议隔离。[图形测试](../tests/e2e/local_agents.py) · [材料回归](../tests/test_materials.py)
+- Wayland 的 XWayland 选择器从真实腾讯会议客户端登录窗口取得有效画面，另用可控窗口验证颜色更新和窗口关闭。原生 Wayland 门户通过逐像素刷新、采集进程被强制终止后重新选窗，并验证 Claude 读取共享画面、更新便签、重启后恢复会话。本次腾讯会议取帧覆盖登录界面，会议进行中的远端视频仍需实机验证。[XWayland 测试](../tests/e2e/xwayland_capture.py) · [原生 Wayland 测试](../tests/e2e/wayland_window.py)
+- Linux 的两个单应用播放流在 PipeWire、PulseAudio 下分别得到隔离，ALSA 虚拟麦克风完成转写。录屏从第 5 分钟起点产生了两个发言人的带时间戳记录。Sophnet、SiliconFlow 在线转写以及停止、重试、导出、回复排队和恢复均经过 GUI 回归。[单流隔离](../tests/e2e/linux_streams.py) · [GUI 主流程](../tests/e2e/desktop.py)
+- 实际使用 v1.2.0 AppImage 创建四场主题会议、便签和会话后，v1.3.0 AppImage 在同一测试配置中恢复原有数据。第五场自动续接、提醒首场问题，AI 更新便签后再次重启仍保留完成状态。两个桌面还验证了双主题各五场的隔离。同一轮 57 项单元和集成测试通过。[主题看板测试](../tests/e2e/topic_board.py)
+
 ## v1.2.0 主题共享看板
 
 在 Wayland 和 X11 上分别启动 Linux AppImage，用两个主题交替开五场会议。第一场保存本场和主题便签，包括已完成的卡片。每个主题从第二场到第五场都在连接后收到开场提醒，两主题共八次。中途退出应用再打开，重连本场时提醒没有重复。第五场通过 OpenAI Responses 回环测试服务实际发起工具调用，将首场问题改为已完成，随后通过状态筛选找到它并手动重新打开。测试核对了来源、更新场次及另一主题的卡片状态。[成品桌面测试](../tests/e2e/topic_board.py)

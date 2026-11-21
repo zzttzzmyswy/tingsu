@@ -8,11 +8,11 @@ py -3.11 -m venv .build-windows
 .\.build-windows\Scripts\python.exe packaging\windows\build.py
 ```
 
-生成的 `dist/Tingsu-Windows-x86_64.exe` 可以单独分发。构建脚本会下载指定版本的 FFmpeg 和 Codex 并校验 SHA-256。EXE 内含 Python、Qt WebEngine、MSVC 运行库、麦克风与窗口采集组件及第三方许可。包内的原生采集组件和外部 CLI 启动器可用 [MinGW 构建脚本](../../windows/native/build.sh) 重新生成。
+生成的 `dist/Tingsu-Windows-x86_64.exe` 可以单独分发。构建脚本会下载指定版本的 FFmpeg 并校验 SHA-256。EXE 内含 Python、Qt WebEngine、MSVC 运行库、麦克风与窗口采集组件及第三方许可。包内的原生采集组件和本地 Agent CLI 启动器可用 [MinGW 构建脚本](../../windows/native/build.sh) 重新生成。
 
 `--cache` 指定下载与构建缓存。默认位置为 `%LOCALAPPDATA%\Tingsu-Build`。已有同版上游程序和许可目录时，可用 `--vendor` 指定离线构建素材。
 
-内置的 `tingsu-host.exe` 负责从单文件应用启动用户安装的 Claude Code 和 DeepSeek Harness。这个小程序在自己的进程中还原 DLL 搜索，继承标准输入输出，通过 Windows Job Object 在取消或桌面应用退出时一起收回 CLI 子进程。可在 Windows 上用标准库测试该组件。[Windows 验收](../../tests/windows/README.md)
+内置的 `tingsu-host.exe` 负责从单文件应用启动用户安装的 Codex、Claude Code 和 DeepSeek Harness。这个小程序在自己的进程中还原 DLL 搜索，继承标准输入输出，通过 Windows Job Object 在取消或桌面应用退出时一起收回 CLI 子进程。可在 Windows 上用标准库测试该组件。[Windows 验收](../../tests/windows/README.md)
 
 ## 在 Linux 上复验 Windows 发布包
 

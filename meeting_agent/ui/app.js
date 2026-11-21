@@ -543,7 +543,8 @@ function settings(tab = "asr", preferred = S.settings.agent) {
       Object.entries(S.providers).filter(([, spec]) => spec.cli).map(([key, spec]) =>
         '<div data-config-for="' + esc(key) + '"><label class="field">' + esc(spec.title) +
         ' 可执行文件<input data-cli-path="' + esc(key) + '" value="' + esc(s[key + "_path"]) +
-        '" placeholder="自动查找 ' + esc(spec.cli) + '"><small>也可填写本机可执行文件的完整路径。</small></label></div>'
+        '" placeholder="自动查找 ' + esc(spec.cli) + '"><small>也可填写本机可执行文件的完整路径。</small></label>' +
+        cliFields(key) + '</div>'
       ).join("") +
       '<label class="toggle-row"><input type="checkbox" id="auto" ' +
       (s.auto ? "checked" : "") +
@@ -560,7 +561,10 @@ function settings(tab = "asr", preferred = S.settings.agent) {
       "</div>",
   );
   if (tab === "asr") asrFields();
-  else showAgentFields();
+  else {
+    document.querySelectorAll("[data-cli-options]").forEach(refreshCliFields);
+    showAgentFields();
+  }
 }
 function showAgentFields() {
   for (const group of document.querySelectorAll("[data-config-for]"))
@@ -604,6 +608,8 @@ function saveSettings() {
     a.agent = $("#ai-provider").value;
     if ($("#openai-key").value.trim()) a.openai_key = $("#openai-key").value.trim();
     a.model = $("#openai-model").value.trim();
+    a.local_agent_options = Object.fromEntries([...document.querySelectorAll("[data-cli-options]")].map(
+      group => [group.dataset.cliOptions, cliValues(group)]));
     for (const field of document.querySelectorAll("[data-cli-path]"))
       a[field.dataset.cliPath + "_path"] = field.value.trim();
     a.auto = $("#auto").checked;
@@ -682,7 +688,7 @@ function agentDialog() {
     body =
       '<label class="field">AI 服务<select id="connect-provider">' +
       providerOptions(S.meeting.topic_provider || S.settings.agent) +
-      '</select></label><p class="hint" id="provider-hint"></p>' +
+      '</select></label><p class="hint" id="provider-hint"></p><div id="connect-options"></div>' +
       (S.meeting.topic_id ? '<p class="hint">本次连接将使用主题「' + esc(S.meeting.topic_name) +
         '」在所选服务中的会话。</p>' : '') + '<div class="dialog-actions">' +
       btn("ai-settings", "AI 设置", "sliders", "secondary left") +
@@ -698,10 +704,22 @@ function providerHint() {
   $('#dialog [data-action="codex-login"]').hidden=$("#connect-provider").value!=="codex";
   $("#provider-hint").textContent =
     S.providers[$("#connect-provider").value]?.hint || "";
+  const key = $("#connect-provider").value;
+  $("#connect-options").innerHTML = S.providers[key]?.cli ? cliFields(key) : "";
+  const group = $("#connect-options [data-cli-options]");
+  if (group) refreshCliFields(group);
 }
 function screenDialog() {
   dlg("screen", "会议画面", '<div id="screen-body"></div>', true, false);
   updateScreen();
+}
+function chooseXwayland(windows) {
+  const options = windows.map(w => '<button class="session-row" data-action="screen-xwindow" data-id="' +
+    esc(w.id) + '">' + icon("screen", 16) + '<span>' + esc(w.title) + '</span><small>' + esc(w.app) +
+    '</small></button>').join("");
+  dlg("xwindows", "选择 XWayland 窗口", (options ? '<div class="session-list">' + options + '</div>' :
+    '<p class="hint">没有可见的 XWayland 应用窗口。打开会议窗口后刷新，或返回使用桌面选择器。</p>') +
+    '<div class="dialog-actions">' + btn("screen", "返回") + btn("screen-xwindows", "刷新窗口", "refresh") + '</div>');
 }
 function updateScreen() {
   const b = $("#screen-body");
@@ -719,8 +737,10 @@ function updateScreen() {
     (S.screen
       ? btn("snapshot", "刷新画面", "refresh") + btn("screen-off", "停止共享", "square")
       : btn("screen-on", "选择桌面窗口", "screen") +
+        (S.xwayland ? btn("screen-xwindows", "选择 XWayland 窗口", "screen") : "") +
         (file ? btn("snapshot", "从录屏取帧", "video") : "")) +
     '</div><p class="hint" style="margin-top:12px">' +
+    (S.xwayland && !S.screen ? "腾讯会议等应用若未出现在桌面选择器中，可从 XWayland 窗口列表选择。" : "") +
     (S.settings.share_frames ? "已开启随 AI 消息发送当前画面。" : "可以将当前帧附到下一条 AI 消息。") +
     '</p><div class="dialog-actions">' +
     btn("close", "关闭") +
@@ -904,8 +924,14 @@ function act(a, el) {
       return agentDialog();
     case "codex-login": return cmd("login");
     case "login-browser": return cmd("login_browser");
-    case "connect":
-      return cmd("connect", { provider: $("#connect-provider").value });
+    case "agent-models": {
+      const field = $('[data-cli-path="codex"]');
+      return cmd("codex_models", field ? {path: field.value.trim()} : {});
+    }
+    case "connect": {
+      const group = $("#connect-options [data-cli-options]");
+      return cmd("connect", { provider: $("#connect-provider").value, ...(group ? {options: cliValues(group)} : {}) });
+    }
     case "disconnect":
       return cmd("disconnect");
     case "session-new":
@@ -937,6 +963,11 @@ function act(a, el) {
       return screenDialog();
     case "screen-on":
       return cmd("screen");
+    case "screen-xwindows":
+      return cmd("screen_windows");
+    case "screen-xwindow":
+      screenDialog();
+      return cmd("screen", {window:id});
     case "screen-off":
       return cmd("screen_off");
     case "snapshot":
@@ -961,6 +992,7 @@ document.addEventListener("click", (e) => {
   else if (e.target === $("#overlay")) close();
 });
 document.addEventListener("input", (e) => {
+  if (e.target.dataset.pref === "model") refreshCliFields(e.target.closest("[data-cli-options]"));
   if (e.target.id === "meeting-find") renderMeetingList();
   if (e.target.id === "record-query") changeMatchPage();
 });
@@ -1021,9 +1053,12 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     toast(text, kind);
   });
   B.event.connect((name, value) => {
+    if (name === "screen-windows" && (modal === "screen" || modal === "xwindows"))
+      chooseXwayland(JSON.parse(value));
     if (name === "search-results") receiveMatches(value);
     if (name === "jump") jumpTo(Number(value));
     if (name === "settings-saved" && modal === "settings") close();
+    if (name === "agent-catalog") document.querySelectorAll("[data-cli-options]").forEach(refreshCliFields);
     if (name === "topic-saved" && modal === "join-topic") close();
     if (name === "note-saved") finishBoardNote();
     if (name === "position" && S) {

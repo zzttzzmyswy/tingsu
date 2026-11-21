@@ -48,7 +48,9 @@ def synthetic_meeting(directory):
         input=first + last,
         check=True,
     )
-    (directory / "agenda.txt").write_text("Verification code: ORCHID-718.", encoding="utf-8")
+    (directory / "agenda.txt").write_text(
+        "Synthetic agenda. " * 10_000 + "Delivery verification code: ORCHID-718.", encoding="utf-8"
+    )
 
 
 def visible_window(title):

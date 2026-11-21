@@ -23,9 +23,11 @@ assets = [(str(root / "meeting_agent" / "ui"), "meeting_agent/ui"),
           (str(Path(sys.base_prefix) / "LICENSE.txt"), "licenses/python")]
 native_tools = [("bin/tingsu-capture.exe", str(helper), "DATA"),
                 ("bin/tingsu-host.exe", str(helper.with_name("tingsu-host.exe")), "DATA")]
-for path in sorted(vendor.rglob("*")):
-    if path.is_file():
-        native_tools.append((str(path.relative_to(vendor)), str(path), "DATA"))
+for asset in ("bin/ffmpeg.exe", "bin/ffprobe.exe", "licenses/ffmpeg/LICENSE"):
+    path = vendor / asset
+    if not path.is_file():
+        raise SystemExit(f"Missing FFmpeg distribution file: {path}")
+    native_tools.append((asset, str(path), "DATA"))
 
 for pkg in ("PySide6", "PySide6-Essentials", "PySide6-Addons", "shiboken6", "PyInstaller",
             "certifi", "charset-normalizer", "idna", "urllib3", "requests", "pypdf",

@@ -103,7 +103,7 @@ def make_fixtures(directory):
     font = ImageFont.load_default(size=46)
     ImageDraw.Draw(image).text((68, 135), "SAGE 417", font=font, fill="white")
     image.save(directory / "slide.png")
-    (directory / "agenda.txt").write_text("Delivery verification code: ORCHID-718.", encoding="utf-8")
+    (directory / "agenda.txt").write_text("Synthetic agenda. " * 10_000 + "Delivery verification code: ORCHID-718.", encoding="utf-8")
     from reportlab.pdfgen.canvas import Canvas
     pdf=Canvas(str(directory/"agenda.pdf"))
     pdf.drawString(70,740,"Delivery verification code: ORCHID-718.")

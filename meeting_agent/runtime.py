@@ -1,7 +1,6 @@
 """Platform paths used by the desktop application and its child processes."""
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,17 +27,3 @@ def media_directory() -> Path:
 
 def child_options() -> dict:
     return {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-
-
-def codex_binary() -> str | None:
-    # Prefer a native executable on Windows, including npm's platform package.
-    if os.name == "nt":
-        native = shutil.which("codex.exe")
-        if native:
-            return native
-        shim = shutil.which("codex.cmd")
-        if shim:
-            tree = Path(shim).parent / "node_modules/@openai"
-            return next((str(p) for p in tree.glob("codex*/**/codex.exe")), None)
-        return None
-    return shutil.which("codex")

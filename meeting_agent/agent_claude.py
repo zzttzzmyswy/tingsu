@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import uuid
 
 from .agent_materials import AgentError
@@ -70,6 +71,8 @@ def _content(inputs):
     for part in inputs:
         if part["type"] == "text":
             blocks.append({"type": "text", "text": part["text"]})
+        elif part["type"] == "document":
+            blocks.append(part)
         elif part["type"] == "image":
             header, data = part["url"].split(",", 1)
             mime = header.removeprefix("data:").removesuffix(";base64")
@@ -84,6 +87,39 @@ def _content(inputs):
 async def _write(proc, packet):
     proc.stdin.write((json.dumps(packet, ensure_ascii=False) + "\n").encode())
     await proc.stdin.drain()
+
+
+async def _read_stderr(stream, tail):
+    # CLI diagnostics may contain credentials or echo a request. Retain a small
+    # window for classification only, and never forward its contents to the GUI.
+    while data := await stream.read(4096):
+        tail.extend(data)
+        del tail[:-16384]
+
+
+def _failure_detail(raw, code=None):
+    detail = raw.lower()
+    prefix = f"Claude Code 已退出（退出码 {code}）。" if code is not None else "Claude Code："
+    rules = (
+        (r"unknown option|unrecognized (argument|option)|invalid choice|invalid argument.*--",
+         "当前 CLI 无法识别本次启动参数，请更新 Claude Code，或将模型、思考等级和速率恢复为本机默认值。"),
+        (r"401|403|unauthori[sz]ed|forbidden|authenticat|not logged in|invalid api key|api key.*(invalid|missing)|login required",
+         "认证失败。请使用同一系统账号在终端运行 claude，检查登录状态或本机服务的凭据。"),
+        (r"429|rate.limit|quota|credit balance",
+         "服务额度不足或请求过于频繁，请检查该账号的额度并稍后重试。"),
+        (r"session.{0,60}(not found|already in use)|no conversation found",
+         "会话不存在或正被其他进程占用，请在终端确认该会话可恢复，或新建会话。"),
+        (r"(model.{0,80}(not found|unavailable|not available|not supported)|invalid model|model_not_found)",
+         "当前模型不可用，请检查模型名称和服务权限，或选择本机默认模型。"),
+        (r"econn|enotfound|etimedout|connection (error|refused|reset)|fetch failed|certificate",
+         "无法连接模型服务，请检查 Claude Code 使用的服务地址、代理和证书设置。"),
+        (r"cannot find module|node: not found|node: no such file|error while loading shared libraries",
+         "本地 CLI 缺少运行依赖，请检查 Node.js 或重新安装 Claude Code。"),
+    )
+    for pattern, hint in rules:
+        if re.search(pattern, detail):
+            return prefix + hint
+    return prefix + "未返回完整回复。请在终端中使用同一账号和模型运行 claude，检查会话及 CLI 配置。"
 
 
 def _control_response(packet, handler):
@@ -102,9 +138,12 @@ def _control_response(packet, handler):
 
 
 class ClaudeBackend:
-    def __init__(self, model="", executable=""):
+    def __init__(self, model="", executable="", effort="", speed=""):
         self.cli = LocalCLI("claude", executable)
         self.model = model
+        self.effort, self.speed = effort, speed
+        self.flags = set()
+        self.dont_ask = False
         self.workspace = app_directory("data") / "claude-workspace"
         self.projects = None
         self.drafts = None
@@ -138,24 +177,45 @@ class ClaudeBackend:
     async def connect(self):
         self.workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
         code, help_text = await self._probe("--help")
-        if code or any(
-            flag not in help_text
-            for flag in (b"--safe-mode", b"--system-prompt-snapshot", b"--include-partial-messages")
-        ):
-            raise AgentError("当前 Claude Code 缺少会议模式所需的 CLI 选项，请更新 Claude Code。")
-        code, raw = await self._probe("--safe-mode", "auth", "status", "--json")
+        self.flags = set(re.findall(r"--[a-z][a-z0-9-]*", help_text.decode(errors="replace")))
+        # Older SDK-compatible releases accept only their default permission mode.
+        # All built-ins remain disabled and the control handler rejects permission prompts.
+        self.dont_ask = b'"dontAsk"' in help_text
+        if code or not {"--input-format", "--output-format", "--strict-mcp-config", "--tools"} <= self.flags:
+            raise AgentError("所选程序不支持 Claude Code 的双向 stream-json 会议协议，请检查可执行文件或更新 CLI。")
+        if self.effort and "--effort" not in self.flags:
+            raise AgentError("此 Claude CLI 没有 --effort 选项。请选择本机默认思考等级或更新 Claude Code。")
+        if self.speed and ("--settings" not in self.flags or self.speed not in ("standard", "fast")):
+            raise AgentError("该版本或速率选项不可用。请选择本机默认速率或更新 Claude Code。")
+        raw = b""
+        if re.search(rb"(?m)^\s*auth(?:\s|$)", help_text):
+            _, raw = await self._probe("auth", "status", "--json")
         try:
             status = json.loads(raw)
         except (ValueError, UnicodeError):
             status = {}
-        if code or not isinstance(status, dict) or not status.get("loggedIn"):
-            raise AgentError("Claude Code 尚未登录。请在终端运行 claude auth login，然后重新连接。")
+        if not isinstance(status, dict):
+            status = {}
+        # Older CLIs lack a JSON auth probe. The first SDK request authenticates with
+        # the CLI's own credentials, including user-configured third-party providers.
         config = Path(
             status.get("configDirectory")
             or os.getenv("CLAUDE_CONFIG_DIR")
             or Path.home() / ".claude"
         )
-        self.projects = config / "projects"
+        if status.get("loggedIn") is False:
+            user = {}
+            with contextlib.suppress(OSError, ValueError):
+                user = json.loads((config / "settings.json").read_text(encoding="utf-8-sig"))
+            user = user if isinstance(user, dict) else {}
+            env = user.get("env")
+            configured = {**(env if isinstance(env, dict) else {}), **os.environ}
+            if not user.get("apiKeyHelper") and not any(configured.get(k) for k in (
+                "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
+                "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+            )):
+                raise AgentError("Claude Code 报告未登录。请在终端检查 claude auth status，或配置本机服务的凭据。")
+        self.projects = Path(status.get("projectsDirectory") or config / "projects")
         # The CLI materializes sessions on first prompt. Remember empty meeting
         # sessions across an app restart without writing fabricated Claude transcripts.
         profile = hashlib.sha256(os.fsencode(config.resolve())).hexdigest()[:20]
@@ -207,11 +267,33 @@ class ClaudeBackend:
         if native:
             args = ["--resume", session_id]
         elif draft.is_file():
-            args = ["--session-id", session_id, "--name", draft.read_text(encoding="utf-8")]
+            args = ["--session-id", session_id]
+            if "--name" in self.flags:
+                args += ["--name", draft.read_text(encoding="utf-8")]
         else:
             raise AgentError("本机会话已移除，请重新选择 Claude Code 会话。")
         if self.model:
             args.extend(["--model", self.model])
+        if self.effort:
+            args.extend(["--effort", self.effort])
+        settings = {}
+        if "--safe-mode" in self.flags:
+            args.append("--safe-mode")
+        else:
+            settings["disableAllHooks"] = True
+        if self.speed:
+            settings["fastMode"] = self.speed == "fast"
+        if settings and "--settings" in self.flags:
+            args.extend(["--settings", json.dumps(settings)])
+        if self.dont_ask:
+            args.extend(["--permission-mode", "dontAsk"])
+        if "--setting-sources" in self.flags:
+            args.extend(["--setting-sources", "user"])
+        for flag in ("--no-chrome", "--disable-slash-commands", "--include-partial-messages"):
+            if flag in self.flags:
+                args.append(flag)
+        if "--system-prompt-snapshot" in self.flags:
+            args.extend(["--system-prompt-snapshot", "off"])
         if handler:
             args.extend(
                 [
@@ -223,38 +305,38 @@ class ClaudeBackend:
             )
         proc = await self._spawn(
             "-p",
-            "--safe-mode",
             "--verbose",
             "--strict-mcp-config",
-            "--no-chrome",
-            "--disable-slash-commands",
             "--tools",
             "",
-            "--permission-mode",
-            "dontAsk",
-            "--setting-sources",
-            "user",
             "--input-format",
             "stream-json",
             "--output-format",
             "stream-json",
-            "--include-partial-messages",
             "--system-prompt",
             GUIDANCE,
-            "--system-prompt-snapshot",
-            "off",
             "--max-turns",
             "12",
             *args,
             stdin=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
             limit=64 * 1024**2,
         )
+        stderr = bytearray()
+        diagnostics = asyncio.create_task(_read_stderr(proc.stderr, stderr))
         try:
-            answer = await self._read_turn(proc, session_id, inputs, on_delta, handler)
+            try:
+                answer = await self._read_turn(proc, session_id, inputs, on_delta, handler)
+            except (BrokenPipeError, ConnectionResetError):
+                answer = None
             proc.stdin.close()
+            if answer is None:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(proc.wait(), 2)
+                    await asyncio.wait_for(asyncio.shield(diagnostics), 1)
+                raise AgentError(_failure_detail(stderr.decode(errors="replace"), proc.returncode))
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(proc.communicate(), 5)
+                await asyncio.wait_for(proc.stdout.read(), 5)
             if draft.exists() and await asyncio.to_thread(self._native, session_id):
                 draft.unlink(missing_ok=True)
             return answer
@@ -262,6 +344,9 @@ class ClaudeBackend:
             raise AgentError("Claude Code 等待回复超时，请检查网络和 CLI 配置。") from exc
         finally:
             await self._finish(proc)
+            diagnostics.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await diagnostics
 
     async def _read_turn(self, proc, sid, inputs, on_delta, handler):
         await _write(
@@ -304,13 +389,11 @@ class ClaudeBackend:
                 message = packet.get("result") or ""
                 if packet.get("is_error") or packet.get("subtype") != "success":
                     detail = message or " ".join(str(item) for item in packet.get("errors", []))
-                    raise AgentError(
-                        "Claude Code：" + (detail or "本次请求失败，请检查登录、额度和模型。")[:450]
-                    )
+                    raise AgentError(_failure_detail(detail))
                 if message and not emitted:
                     on_delta(message)
                 return message or "".join(emitted)
-        raise AgentError("Claude Code 已结束，未返回完整回复。请检查会话、登录和本地 CLI 版本。")
+        return None
 
     async def close(self):
         if self.proc is not None:

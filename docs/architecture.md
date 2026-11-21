@@ -36,7 +36,7 @@ flowchart LR
 | --- | --- | --- |
 | 桌面和界面 | QtWebEngine 加载同一组本地 HTML、CSS 和 JS。QWebChannel 将命令、状态和流式文本接入同一个会议工作台。 | Qt 选择 Wayland、X11 或 Windows 平台插件，文件和窗口选择经过桌面接口。[桌面入口](../meeting_agent/__main__.py) · [界面逻辑](../meeting_agent/ui/app.js) |
 | 声音到转写 | 所有设备和文件来源先产生 16 kHz、单声道、16 位小端 PCM。一个 AudioCapture 负责分片、时间戳、停止和尾音，ASR 接收 WAV 并统一输出带时间范围的 Segment。 | Linux 枚举 PipeWire、PulseAudio 和 ALSA，Windows 原生子进程负责 WASAPI。网络服务的请求格式、轮询、时间单位与说话人差异在 ASR 内部消化。[音频入口](../meeting_agent/capture.py) · [ASR](../meeting_agent/asr.py) · [Windows 原生音频](../windows/native/audio.cpp) |
-| 会议画面 | 上层使用同一组开始、请求新帧、停止接口，获取本机保存的 JPEG。Agent 发送附件时复用该结果。 | Wayland 处理门户授权与 PipeWire 流，X11 选取并截取窗口，Windows 选择 HWND 并调用原生截图程序。Windows 的选择框在 Qt 主线程执行，后续抓帧在工作线程执行。[画面生命周期](../meeting_agent/screen_capture.py) · [Windows 适配器](../meeting_agent/windows_capture.py) |
+| 会议画面 | 上层使用同一组开始、请求新帧、停止接口，获取本机保存的 JPEG。Agent 发送附件时复用该结果。 | Wayland 处理门户授权与 PipeWire 流，也支持选择经 XWayland 显示的单个窗口，X11 选取并截取窗口，Windows 选择 HWND 并调用原生截图程序。Windows 的选择框在 Qt 主线程执行，后续抓帧在工作线程执行。[画面生命周期](../meeting_agent/screen_capture.py) · [Windows 适配器](../meeting_agent/windows_capture.py) |
 | 会议记录和看板 | 一套 SQLite 表保存发言、音频分片任务和便签。提交转写与移除对应任务处于同一事务中。界面和 Agent 最终调用同一个 Store.tool，修改与删除同时限定会议 ID 和便签 ID。 | 系统差异主要是 XDG 与 LOCALAPPDATA 目录。导入媒体保存本机路径，换机器后仍需提供相应媒体。[数据层](../meeting_agent/storage.py) · [目录选择](../meeting_agent/runtime.py) |
 | Agent | AgentClient 调度连接、建会话、续接、发送、取消和关闭。附件读取、工具参数校验及按会议执行的回调可由多个 Agent 复用。 | HTTP 流、Codex app-server 和外部 CLI 各自处理原生协议、身份、会话 ID、图片格式和取消动作。可列出的历史范围由对应服务决定。[会话入口](../meeting_agent/agents.py) · [材料](../meeting_agent/agent_materials.py) · [工具定义](../meeting_agent/agent_tools.py) |
 
@@ -44,13 +44,13 @@ flowchart LR
 
 ## 这次增加两个 Agent 时实际复用了什么
 
-AgentBackend 协议约定五个异步操作，供应商注册表统一给出名称、连接提示、可执行文件配置、附件格式和后端构造方法。设置页和连接页读取同一份清单。两个新后端都使用 LocalCLI 查找并启动宿主程序。Claude 适配其 stream-json 协议，DeepSeek 适配 ACP。同一个 AgentClient 保证一个连接同时只处理一个操作，并负责取消和释放连接。[供应商注册](../meeting_agent/agent_providers.py) · [宿主启动器](../meeting_agent/local_cli.py) · [Claude](../meeting_agent/agent_claude.py) · [DeepSeek](../meeting_agent/agent_deepseek.py)
+AgentBackend 协议约定五个异步操作，供应商注册表统一给出名称、连接提示、可执行文件配置、附件格式和后端构造方法。设置页和连接页读取同一份清单。三个本地后端都使用 LocalCLI 查找并启动宿主程序。Claude 适配其 stream-json 协议，DeepSeek 适配 ACP。同一个 AgentClient 保证一个连接同时只处理一个操作，并负责取消和释放连接。[供应商注册](../meeting_agent/agent_providers.py) · [宿主启动器](../meeting_agent/local_cli.py) · [Claude](../meeting_agent/agent_claude.py) · [DeepSeek](../meeting_agent/agent_deepseek.py)
 
 两个本地 CLI 访问同一份会议工具定义和参数校验。Claude 的双向标准流转发 MCP 请求，DeepSeek 的 ACP 会话使用带随机凭据、仅监听本机回环地址的 MCP 端点。两条路径最终都调用绑定当前会议的 Store.tool。每场会议现在按供应商分别保存最近的会话 ID，旧库中原有的单条关联会在打开时迁入。切换供应商后可以回到各自的会话。[MCP 处理](../meeting_agent/meeting_mcp.py) · [会议关联](../meeting_agent/storage.py)
 
 ## 单文件交付和本机 CLI
 
-AppImage 与 Windows 单文件 EXE 各自打包 Qt、Python 和媒体工具。桌面的授权门户、声音服务、用户安装的 Agent 及其登录状态仍属于宿主系统。内置 Codex 随应用分发，Claude Code 和 DeepSeek Harness 则复用用户已经安装的版本。程序启动成功可以验证 GUI 运行时，调用一个已安装 CLI 还需要验证下一层进程环境。[Linux 入口](../packaging/linux/AppRun) · [Windows 入口](../packaging/windows/entry.py)
+AppImage 与 Windows 单文件 EXE 各自打包 Qt、Python 和媒体工具。桌面的授权门户、声音服务、用户安装的 Agent 及其登录状态仍属于宿主系统。Codex、Claude Code 和 DeepSeek Harness 均从用户安装的位置启动。程序启动成功可以验证 GUI 运行时，调用一个已安装 CLI 还需要验证下一层进程环境。[Linux 入口](../packaging/linux/AppRun) · [Windows 入口](../packaging/windows/entry.py)
 
 - **Linux。** AppRun 会设置 PATH、PYTHONHOME、PYTHONPATH、LD_LIBRARY_PATH 和 Qt、GStreamer 等变量。包内 FFmpeg 需要随包的库，外部 CLI 则可能使用自己的 Node、Python 或动态库。AppRun 现在记录它修改的宿主变量，LocalCLI 为外部程序还原，保留当前用户的登录配置与网络设置。设置页也可指定绝对路径，解决桌面 PATH 与交互终端不同的问题。
 - **Windows。** PyInstaller 除了临时解包目录，还会改变 DLL 搜索目录。Windows 启动器在单独的进程内恢复 DLL 搜索目录，使用 Job Object 管理 CLI 和它启动的子进程。外部程序通过原生 EXE 或 npm 包声明的入口启动，材料和提示词通过标准输入发送。测试在含中文和空格的路径运行 Windows 可执行文件，分别取消请求、终止父进程，并用 Win32 进程句柄确认孙进程也退出。[原生启动器](../windows/native/host.cpp) · [启动器验收](../tests/windows/host_cli.py) · [PyInstaller 外部程序说明](https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html#launching-external-programs-from-the-frozen-application)

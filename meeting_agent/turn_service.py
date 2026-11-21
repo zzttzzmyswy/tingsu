@@ -163,13 +163,12 @@ class TurnService:
                 context = self.store.agent_context(mid)
                 if followups:
                     context["本次开场跟进"] = items
-                files = list(attachments)
-                if get_frame and not token.is_set():
-                    files.append(get_frame())
+                frame = get_frame() if get_frame and not token.is_set() else None
                 if token.is_set():
                     raise AgentCancelled("已停止请求")
-                reply = client.send(prompt, attachments=files, on_delta=delta, tool_handler=tool,
-                                    context=json.dumps(context, ensure_ascii=False), cancel_event=token)
+                reply = client.send(prompt, attachments=list(attachments), frame=frame, material_scope=mid,
+                                    on_delta=delta, tool_handler=tool, context=json.dumps(context, ensure_ascii=False),
+                                    cancel_event=token)
             except Exception as exc:
                 self.post(lambda e=exc: self._finish(token, mid, at, "", e))
             else:

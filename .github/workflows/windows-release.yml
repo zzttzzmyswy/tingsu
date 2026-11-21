@@ -1,0 +1,85 @@
+name: Native Windows release acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Candidate release tag in this repository
+        required: true
+        type: string
+      release_id:
+        description: Numeric release ID for a draft (published tags can omit it)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download and verify the release executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          if ($env:RELEASE_ID) {
+            if ($env:RELEASE_ID -notmatch '^[0-9]+$') { throw 'Invalid numeric release ID' }
+            $release = Invoke-RestMethod "$base/$env:RELEASE_ID" -Headers $headers
+          } else {
+            $release = Invoke-RestMethod "$base/tags/$([Uri]::EscapeDataString($env:RELEASE_TAG))" -Headers $headers
+          }
+          if ($release.tag_name -cne $env:RELEASE_TAG) { throw 'Release ID does not match the requested tag' }
+          $target = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'verified release')
+          $app = 'Tingsu-Windows-x86_64.exe'
+          foreach ($name in @('SHA256SUMS', $app)) {
+            $asset = @($release.assets | Where-Object { $_.name -ceq $name -and $_.state -eq 'uploaded' })
+            if ($asset.Count -ne 1) { throw "Missing or ambiguous release asset: $name" }
+            curl.exe --fail --silent --show-error --location --retry 3 --header "Authorization: Bearer $env:GH_TOKEN" --header 'Accept: application/octet-stream' --output (Join-Path $target $name) "$base/assets/$($asset[0].id)"
+            if ($LASTEXITCODE -ne 0) { throw "Asset download failed: $name" }
+          }
+          $checksum = @(Select-String -Path (Join-Path $target 'SHA256SUMS') -Pattern '^([a-fA-F0-9]{64})\s+\*?Tingsu-Windows-x86_64\.exe$')
+          if ($checksum.Count -ne 1) { throw 'Expected exactly one Windows executable in SHA256SUMS' }
+          $exe = Join-Path $target $app
+          $actual = (Get-FileHash $exe -Algorithm SHA256).Hash
+          if ($actual -ne $checksum[0].Matches[0].Groups[1].Value) { throw 'Release executable checksum mismatch' }
+          Write-Host "Verified $app for $($release.tag_name): $actual"
+
+      - name: Install the official external Codex CLI for this test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'codex.zip'
+          curl.exe --fail --silent --show-error --location --retry 3 --output $zip https://github.com/openai/codex/releases/download/rust-v0.171.0/codex-x86_64-pc-windows-msvc.exe.zip
+          if ($LASTEXITCODE -ne 0) { throw 'Codex download failed' }
+          if ((Get-FileHash $zip).Hash -ne '3db356dcd1efdd946741fa7c543d772522777332a996322d325918d04ca01820') { throw 'Codex archive checksum mismatch' }
+          $agent = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'System agents')
+          Expand-Archive $zip -DestinationPath $agent
+          $binary = @(Get-ChildItem $agent -Recurse -File -Include codex.exe,codex-x86_64-pc-windows-msvc.exe)
+          if ($binary.Count -ne 1 -or (Get-FileHash $binary[0].FullName).Hash -ne 'cefea4ffee1fff04983a99c0dda99944d8b380e891e740a28b32f4b815a6e0b7') { throw 'Codex executable checksum mismatch' }
+          $path = Join-Path $agent 'codex.exe'
+          if ($binary[0].FullName -ne $path) { Move-Item -LiteralPath $binary[0].FullName -Destination $path }
+          & $path --version
+          if ($LASTEXITCODE -ne 0) { throw 'Codex failed to start on Windows' }
+          python -m pip install websocket-client==1.8.0 pillow==11.3.0
+
+      - name: Run the GUI, receive a reply and resume the session after restart
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          python -u tests/e2e/native_windows_codex.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') --codex (Join-Path $env:RUNNER_TEMP 'System agents/codex.exe')

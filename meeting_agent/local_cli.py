@@ -10,7 +10,11 @@ import sys
 from .agent_materials import AgentError
 from .runtime import child_options
 
-PACKAGES = {"claude": ("claude", "@anthropic-ai/claude-code"), "deepseek": ("dsh", "@deepseek-ai/dsh")}
+PACKAGES = {
+    "codex": ("codex", "@openai/codex"),
+    "claude": ("claude", "@anthropic-ai/claude-code"),
+    "deepseek": ("dsh", "@deepseek-ai/dsh"),
+}
 
 
 def _remove_bundle_paths(env, root):
@@ -49,16 +53,42 @@ def host_environment():
     return env
 
 
+def _node_versions(directory, suffix):
+    # Version managers isolate globally installed CLIs by Node version.
+    def version(path):
+        return tuple(int(n) for n in path.name.lstrip("v").split(".") if n.isdigit())
+
+    return [p / suffix for p in sorted(directory.glob("v[0-9]*"), key=version, reverse=True)]
+
+
 def _search_dirs(env):
+    home = Path.home()
     dirs = [Path(p) for p in env.get("PATH", "").split(os.pathsep) if p and Path(p).is_absolute()]
-    dirs.append(Path.home() / ".local/bin")
+    dirs.append(home / ".local/bin")
+    if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
+        dirs.append(Path(prefix) if os.name == "nt" else Path(prefix) / "bin")
     if os.name == "nt":
         if roaming := env.get("APPDATA"):
             dirs.append(Path(roaming) / "npm")
-        if programs := env.get("ProgramFiles"):
+        if programs := env.get("PROGRAMFILES") or env.get("ProgramFiles"):
             dirs.append(Path(programs) / "nodejs")
-    if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
-        dirs.append(Path(prefix) if os.name == "nt" else Path(prefix) / "bin")
+        if local := env.get("LOCALAPPDATA"):
+            dirs.append(Path(local) / "Volta/bin")
+        for variable in ("FNM_MULTISHELL_PATH", "NVM_SYMLINK"):
+            if directory := env.get(variable):
+                dirs.append(Path(directory))
+    else:
+        dirs.extend((home / ".claude/local", home / ".npm-global/bin", home / ".volta/bin", home / ".bun/bin"))
+        if active := env.get("NVM_BIN"):
+            dirs.append(Path(active))
+        if active := env.get("FNM_MULTISHELL_PATH"):
+            dirs.append(Path(active) / "bin")
+        nvm = Path(env.get("NVM_DIR") or home / ".nvm")
+        xdg = Path(env.get("XDG_DATA_HOME") or home / ".local/share")
+        fnm = Path(env.get("FNM_DIR") or xdg / "fnm")
+        dirs.append(fnm / "aliases/default/bin")
+        dirs.extend(_node_versions(nvm / "versions/node", "bin"))
+        dirs.extend(_node_versions(fnm / "node-versions", "installation/bin"))
     return list(dict.fromkeys(directory for directory in dirs if directory.is_absolute()))
 
 
@@ -143,16 +173,19 @@ class LocalCLI:
             raise AgentError("找不到 Windows CLI 启动组件，请使用完整发行包或重新构建原生组件。")
         return [str(helper), str(os.getpid()), *_windows_entry(path, self.provider, directories)]
 
-    async def spawn(self, *args, cwd=None, env_overrides=None, **pipes):
+    def invocation(self, *args, env_overrides=None):
         env = host_environment()
         for name, value in (env_overrides or {}).items():
             if value is None:
                 env.pop(name, None)
             else:
                 env[name] = value
-        cmd = self._command(env)
+        return [*self._command(env), *args], env
+
+    async def spawn(self, *args, cwd=None, env_overrides=None, **pipes):
+        cmd, env = self.invocation(*args, env_overrides=env_overrides)
         return await asyncio.create_subprocess_exec(
-            *cmd, *args, cwd=cwd, env=env, start_new_session=os.name != "nt", **child_options(), **pipes
+            *cmd, cwd=cwd, env=env, start_new_session=os.name != "nt", **child_options(), **pipes
         )
 
     async def stop(self, proc):

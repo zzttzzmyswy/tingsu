@@ -88,25 +88,27 @@ static bool is_index(const wchar_t* url) {
 
 static std::wstring dialog_filter(const std::wstring& filters) {
     std::wstring out;
+    bool includes_all = false;
     for (size_t pos = 0; pos < filters.size();) {
         size_t end = filters.find(L";;", pos);
         auto label = filters.substr(pos, end == std::wstring::npos ? end : end - pos);
         auto left = label.find(L'('), right = label.rfind(L')');
-        if (left != std::wstring::npos && right > left + 1) {
-            std::wistringstream patterns(label.substr(left + 1, right - left - 1));
-            std::wstring pattern, joined;
-            while (patterns >> pattern) {
-                if (!joined.empty()) joined += L';';
-                joined += pattern == L"*" ? L"*.*" : pattern;
-            }
-            if (!joined.empty()) {
-                out += label; out += L'\0'; out += joined; out += L'\0';
-            }
+        bool named = left != std::wstring::npos && right != std::wstring::npos && right > left + 1;
+        std::wistringstream patterns(named ? label.substr(left + 1, right - left - 1) : label);
+        std::wstring pattern, joined;
+        while (patterns >> pattern) {
+            if (pattern.front() != L'*') continue;
+            if (!joined.empty()) joined += L';';
+            joined += pattern == L"*" ? L"*.*" : pattern;
+            includes_all |= pattern == L"*" || pattern == L"*.*";
+        }
+        if (!joined.empty()) {
+            out += named ? label : L"支持的文件"; out += L'\0'; out += joined; out += L'\0';
         }
         if (end == std::wstring::npos) break;
         pos = end + 2;
     }
-    if (out.empty()) {
+    if (!includes_all) {
         out += L"所有文件"; out += L'\0'; out += L"*.*"; out += L'\0';
     }
     out += L'\0';

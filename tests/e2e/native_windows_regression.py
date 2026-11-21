@@ -36,12 +36,14 @@ def synthetic_avi(target):
 
 def profile(root):
     env = {k: v for k, v in os.environ.items() if not any(word in k for word in ("API_KEY", "TOKEN"))}
-    folders = {"LOCALAPPDATA": "local", "APPDATA": "roaming", "USERPROFILE": "user"}
+    # The Explorer save dialog resolves Desktop and Documents through the actual
+    # Windows profile. Isolate our data and agents without invalidating shell folders.
+    folders = {"LOCALAPPDATA": "local", "APPDATA": "roaming", "CODEX_HOME": "codex"}
     for key, name in folders.items():
         target = root / name
         target.mkdir(parents=True)
         env[key] = str(target)
-    env.update(HOME=env["USERPROFILE"], TINGSU_APP_DIR=str(root))
+    env["TINGSU_APP_DIR"] = str(root)
     return env
 
 

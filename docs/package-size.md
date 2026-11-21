@@ -7,7 +7,7 @@
 | 平台 | v1.3.0 | v1.4.0 | 减少 | 距上限 |
 |---|---:|---:|---:|---:|
 | Linux AppImage | 308.30 MB | 91.43 MB（91,425,272 字节） | 70.34% | 8.57 MB |
-| Windows EXE | 257.71 MB | 93.57 MB（93,567,099 字节） | 63.69% | 6.43 MB |
+| Windows EXE | 257.71 MB | 93.57 MB（93,567,288 字节） | 63.69% | 6.43 MB |
 
 原先由 Python / PySide6 创建的 Qt WebEngine 窗口已改用 C++ 实现。Linux 通过 GTK 3 使用桌面的 WebKitGTK，Windows 通过 Win32 使用系统 WebView2。同一套 HTML 工作台和 Python 会议服务继续处理转写、截图、会话、附件和便签。系统 Agent CLI 仍可独立升级。两个单文件均包含 FFmpeg 和 ffprobe。[Linux 窗口实现](../desktop/linux/main.cpp) · [Windows 窗口实现](../windows/native/webview.cpp)
 

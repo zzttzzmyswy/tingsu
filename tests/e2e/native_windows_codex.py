@@ -189,11 +189,11 @@ def verify(app, codex):
         home.mkdir()
         # Run with an empty desktop profile. All model inputs, credentials and replies are synthetic.
         env = {k: v for k, v in os.environ.items() if not any(x in k.upper() for x in ("TOKEN", "API_KEY"))}
-        for key, folder in (("LOCALAPPDATA", "local"), ("APPDATA", "roaming"), ("USERPROFILE", "user")):
+        for key, folder in (("LOCALAPPDATA", "local"), ("APPDATA", "roaming")):
             path = root / folder
             path.mkdir()
             env[key] = str(path)
-        env.update(CODEX_HOME=str(home), HOME=env["USERPROFILE"], TINGSU_APP_DIR=str(root))
+        env.update(CODEX_HOME=str(home), TINGSU_APP_DIR=str(root))
         with ThreadingHTTPServer(("127.0.0.1", 0), WorkspaceFixture) as model:
             model.platform = "windows"
             model.reads, model.waiting_result = 0, False

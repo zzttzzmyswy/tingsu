@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+app_dir=$(dirname "$(readlink -f "$0")")
+cd "$app_dir"
+if [ -x "$app_dir/.venv/bin/python" ]; then
+    exec "$app_dir/.venv/bin/python" -m meeting_agent "$@"
+fi
+exec python3 -m meeting_agent "$@"

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=听序
+Name[en]=Tingsu
+Comment=实时会议转写、AI 对话与便签
+Exec=tingsu
+Icon=tingsu
+Terminal=false
+Categories=AudioVideo;Audio;Qt;

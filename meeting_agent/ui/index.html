@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' qrc:; img-src data: 'self'; font-src 'self';"
+    />
+    <title>听序 · 会议工作台</title>
+    <link rel="stylesheet" href="style.css" />
+    <script defer src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <script defer src="icons.js"></script>
+    <script defer src="workspace.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="rail">
+        <div class="brand">
+          <span class="brand-mark"><i></i><i></i><i></i><i></i><i></i></span>听序<span class="brand-latin"
+            >Tingsu</span
+          >
+        </div>
+        <button class="rail-new" data-action="new"><i data-icon="plus"></i>新建会议</button>
+        <div class="nav-label">工作空间</div>
+        <button class="nav-item" data-action="workspace"><i data-icon="layout"></i>会议工作台</button>
+        <button class="nav-item" data-action="library">
+          <i data-icon="library"></i>录屏资料库<span id="media-count" class="nav-count"></span>
+        </button>
+        <div class="rail-divider"></div>
+        <div class="rail-search-title"><span class="nav-label recent-label">最近会议</span>
+          <button data-action="find-meeting" title="查找会议" aria-label="查找会议" aria-expanded="false" aria-controls="meeting-find"><i data-icon="search"></i></button>
+        </div>
+        <input id="meeting-find" class="rail-search" type="search" placeholder="查找会议名称" aria-label="查找会议名称" hidden />
+        <div id="meetings" class="recent"></div>
+        <div class="rail-foot">
+          <button class="nav-item" data-action="settings"><i data-icon="settings"></i>偏好设置</button>
+          <div class="local-user">
+            <span class="user-symbol"><i data-icon="headphones"></i></span>
+            <div>
+              <b>本地工作空间</b><small><em class="dot"></em>存储于此设备</small>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <div class="shell">
+        <header class="top">
+          <div class="crumb">
+            <i data-icon="panels"></i><span>工作空间</span><em>/</em><b id="crumb">会议工作台</b>
+          </div>
+          <div class="top-right">
+            <button class="link-agent" data-action="agent">
+              <em class="dot"></em><span id="agent-label">连接 AI</span
+              ><i data-icon="chevronDown"></i></button
+            ><span class="top-rule"></span
+            ><button class="icon-button" title="偏好设置" data-action="settings">
+              <i data-icon="sliders"></i>
+            </button>
+          </div>
+        </header>
+        <main id="studio">
+          <section class="meeting-head">
+            <div class="heading-area">
+              <div class="heading-line">
+                <h1 id="title" tabindex="-1"></h1>
+                <span id="sample"></span
+                ><button class="icon-button rename" data-action="rename" title="重命名会议">
+                  <i data-icon="pencil"></i>
+                </button>
+              </div>
+              <div id="meta" class="meta"></div>
+            </div>
+            <div id="actions" class="head-actions"></div>
+          </section>
+          <section class="timeline" aria-label="发言时间线">
+            <div class="timeline-header">
+              <div class="timeline-title">
+                <i data-icon="activity"></i><b>发言时间线</b
+                ><button id="track-status" data-action="source" title="音频来源"></button>
+              </div>
+              <div class="timeline-right">
+                <div id="legend"></div>
+                <button data-action="screen" title="查看会议画面">
+                  <i data-icon="screen"></i><span>会议画面</span>
+                </button>
+              </div>
+            </div>
+            <div class="track-wrap"><div id="track" class="track"></div></div>
+            <div id="ticks" class="ticks"></div>
+          </section>
+          <div id="backlog"></div>
+          <div class="panes">
+            <section class="panel feed">
+              <div class="panel-header">
+                <div class="panel-title">
+                  <i data-icon="messages"></i>
+                  <h2>会议动态</h2>
+                </div>
+                <div class="panel-controls"><div class="segmented" id="feed-filters"></div>
+                  <button class="small-tool" data-action="find-record" title="查找会议记录 (Ctrl+F)" aria-label="查找会议记录" aria-expanded="false" aria-controls="record-tools"><i data-icon="search"></i></button>
+                </div>
+              </div>
+              <div id="record-tools" class="record-tools" hidden>
+                <input id="record-query" type="search" maxlength="300" aria-label="在本场会议中查找" placeholder="在整场会议中查找…" />
+                <select id="speaker-filter" aria-label="按发言人筛选"></select>
+              </div>
+              <div id="match-pages" class="match-pages" hidden>
+                <span id="match-count" role="status"></span>
+                <button data-action="match-prev" aria-label="上一页结果">上一页</button>
+                <button data-action="match-next" aria-label="下一页结果">下一页</button>
+              </div>
+              <div class="feed-viewport">
+                <div class="feed-scroll" id="feed-scroll">
+                  <div id="feed-list"></div>
+                  <div id="stream"></div>
+                </div>
+                <button id="return-latest" class="return-latest" data-action="latest" hidden><i data-icon="arrowDown"></i><span>回到最新</span></button>
+              </div>
+              <div class="composer-wrap">
+                <div id="file-list"></div>
+                <div class="composer">
+                  <textarea
+                    id="message"
+                    rows="1"
+                    placeholder="向 AI 插话，或补充会议材料…"
+                    aria-label="给 AI 的消息"
+                  ></textarea>
+                  <div class="composer-foot">
+                    <div class="composer-tools">
+                      <button data-action="attach" class="icon-button" title="添加会议材料">
+                        <i data-icon="paperclip"></i></button
+                      ><button data-action="screen" class="icon-button" title="附上会议画面">
+                        <i data-icon="scan"></i></button
+                      ><span id="composer-state"></span>
+                    </div>
+                    <div class="send-tools">
+                      <button class="stop-turn" data-action="cancel" title="停止 AI 回复">
+                        <i data-icon="square"></i></button
+                      ><button data-action="send" class="send" title="发送消息 (Enter)">
+                        <i data-icon="arrowUp"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="panel board">
+              <div class="panel-header">
+                <div class="panel-title">
+                  <i data-icon="board"></i>
+                  <h2>会议便签</h2>
+                  <span id="note-count" class="counter"></span>
+                </div>
+                <div class="panel-controls"><select id="note-filter" aria-label="按便签类型筛选">
+                  <option value="">全部类型</option><option value="question">待解问题</option><option value="task">待办事项</option><option value="idea">灵感想法</option><option value="decision">会议决策</option>
+                </select><button class="add-note" data-action="note-new" title="新建便签">
+                  <i data-icon="plus"></i>
+                </button></div>
+              </div>
+              <div class="note-scroll" id="notes"></div>
+            </section>
+          </div>
+        </main>
+        <main id="library" hidden>
+          <section class="meeting-head">
+            <div class="heading-area">
+              <h1>录屏资料库</h1>
+              <div class="meta" id="library-meta"></div>
+            </div>
+            <button class="primary" data-action="import"><i data-icon="import"></i>添加媒体</button>
+          </section>
+          <div class="library-grid" id="library-grid"></div>
+        </main>
+      </div>
+    </div>
+    <div id="overlay" hidden>
+      <section
+        id="dialog"
+        class="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dialog-title"
+      ></section>
+    </div>
+    <div id="notices" aria-live="polite"></div>
+  </body>
+</html>

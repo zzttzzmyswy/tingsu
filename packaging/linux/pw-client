@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keep the current recording tools and matching client modules isolated from GStreamer.
+set -eu
+client=$(dirname "$(readlink -f "$0")")/../lib/tingsu/pw-client
+export LD_LIBRARY_PATH="$client/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PIPEWIRE_MODULE_DIR="$client/modules" SPA_PLUGIN_DIR="$client/spa"
+export PIPEWIRE_CONFIG_DIR="$client/config"
+exec "$client/bin/${0##*/}" "$@"

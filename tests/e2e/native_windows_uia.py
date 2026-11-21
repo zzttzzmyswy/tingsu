@@ -20,6 +20,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName System.Windows.Forms
 
 function Find-HostWindow {
     # A PyInstaller one-file launcher starts a Python process which starts the UI host.
@@ -59,7 +60,8 @@ function Named-Button([string]$Name) {
     $byType = [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::Button)
-    $condition = [System.Windows.Automation.AndCondition]::new($byName, $byType)
+    $conditions = [System.Windows.Automation.Condition[]]@($byName, $byType)
+    $condition = [System.Windows.Automation.AndCondition]::new($conditions)
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
 
@@ -69,7 +71,8 @@ function Invoke-Button([string]$Name) {
     if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
         $pattern.Invoke()
     } else {
-        $element.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern).DoDefaultAction()
+        $element.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
     }
     Write-Host "Invoked UIA button $Name"
 }
@@ -92,9 +95,23 @@ try {
     if ($Mode -eq 'create') {
         Invoke-Button '新建会议'
         $editor = Wait-For { Get-Editor } 'the meeting-name input'
-        $inputValue = $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-        $inputValue.SetValue($MeetingName)
-        if ($inputValue.Current.Value -ne $MeetingName) { throw 'The meeting-name field did not accept the title' }
+        $editor.SetFocus()
+        $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($MeetingName)
+        # Blink updates its UIA properties asynchronously after receiving a native action.
+        $readTitle = {
+            $field = Get-Editor
+            if ($null -ne $field) {
+                $pattern = $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+                if ($pattern.Current.Value -ceq $MeetingName) { return $field }
+            }
+        }
+        try { $null = Wait-For $readTitle 'the entered meeting name' 4 }
+        catch {
+            $editor.SetFocus()
+            [System.Windows.Forms.SendKeys]::SendWait('^a')
+            [System.Windows.Forms.SendKeys]::SendWait($MeetingName)
+            $null = Wait-For $readTitle 'the entered meeting name after keyboard input' 10
+        }
         Invoke-Button '仅创建会议'
     }
     # The title of the named meeting is present in the normally rendered page after reopening.
@@ -121,7 +138,8 @@ def verify(app):
         raise RuntimeError("This test requires a Windows desktop")
     env = {key: value for key, value in os.environ.items()
            if not any(word in key for word in ("TOKEN", "API_KEY"))}
-    with tempfile.TemporaryDirectory(prefix="tingsu-uia-") as directory:
+    # Chromium can hold a cache file open briefly after its top-level process has exited.
+    with tempfile.TemporaryDirectory(prefix="tingsu-uia-", ignore_cleanup_errors=True) as directory:
         root = Path(directory)
         for key in ("LOCALAPPDATA", "APPDATA", "USERPROFILE"):
             target = root / key.lower()

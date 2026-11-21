@@ -71,7 +71,7 @@ def media_flow(page, root):
     print("PASS native open/save dialogs, real AVI import and decoded frame, Markdown export", flush=True)
 
 
-def verify_regression(app):
+def verify_workspace(app):
     with TemporaryDirectory(prefix="tingsu-webview2-workspace-") as temp:
         root = Path(temp)
         env = profile(root)
@@ -88,6 +88,9 @@ def verify_regression(app):
             finally:
                 model.release.set()
                 model.shutdown()
+
+
+def verify_board(app):
     with TemporaryDirectory(prefix="tingsu-webview2-board-") as temp:
         root = Path(temp)
         env = profile(root)

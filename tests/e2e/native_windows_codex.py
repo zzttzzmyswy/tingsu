@@ -32,6 +32,34 @@ def choose_attachment(path, title="添加会议材料"):
     user.FindWindowExW.restype = wt.HWND
     user.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
     user.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    user.SetForegroundWindow.argtypes = [wt.HWND]
+    user.IsWindowVisible.argtypes = [wt.HWND]
+    user.IsWindowEnabled.argtypes = [wt.HWND]
+    user.GetWindowTextW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+    user.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+    callback_type = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    user.EnumWindows.argtypes = [callback_type, wt.LPARAM]
+    user.EnumChildWindows.argtypes = [wt.HWND, callback_type, wt.LPARAM]
+    def window_text(hwnd, fn):
+        buf = ctypes.create_unicode_buffer(400)
+        fn(hwnd, buf, len(buf))
+        return buf.value
+    def dialogs():
+        records = []
+        @callback_type
+        def capture(hwnd, _):
+            if user.IsWindowVisible(hwnd) and window_text(hwnd, user.GetClassNameW) == "#32770":
+                records.append(window_text(hwnd, user.GetWindowTextW))
+                @callback_type
+                def detail(child, _):
+                    text = window_text(child, user.GetWindowTextW)
+                    if text:
+                        records.append((window_text(child, user.GetClassNameW), text))
+                    return True
+                user.EnumChildWindows(hwnd, detail, 0)
+            return True
+        user.EnumWindows(capture, 0)
+        return records
     until = time.monotonic() + 30
     while time.monotonic() < until:
         dialog = user.FindWindowW("#32770", title)
@@ -41,15 +69,22 @@ def choose_attachment(path, title="添加会议材料"):
             inner = user.FindWindowExW(combo, None, "ComboBox", None) if combo else None
             field = (user.FindWindowExW(inner or combo, None, "Edit", None) if combo else None) or user.GetDlgItem(dialog, 1152)
             button = user.GetDlgItem(dialog, 1)
-            if field and button:
-                value = ctypes.create_unicode_buffer(str(path))
+            if field and button and user.IsWindowEnabled(dialog) and user.IsWindowEnabled(button):
+                user.SetForegroundWindow(dialog)
+                # Quotes disambiguate spaces in the multi-select open dialog.
+                value = ctypes.create_unicode_buffer(f'"{path}"')
                 if not user.SendMessageW(field, 0x000C, 0, ctypes.addressof(value)):
                     raise RuntimeError("Windows rejected the selected file name")
-                if not user.PostMessageW(button, 0x00F5, 0, 0):
+                if not user.PostMessageW(dialog, 0x0111, 1, button):  # WM_COMMAND, IDOK
                     raise RuntimeError("Cannot confirm the attachment picker")
-                return
+                limit = time.monotonic() + 5
+                while time.monotonic() < limit:
+                    if not user.IsWindowVisible(dialog):
+                        return
+                    time.sleep(0.08)
+                raise RuntimeError("Native picker did not accept the selected path: " + str(dialogs()))
         time.sleep(0.15)
-    raise RuntimeError("No Windows file-name field in the native attachment picker")
+    raise RuntimeError("No Windows file-name field in the native attachment picker: " + str(dialogs()))
 
 
 @contextmanager
@@ -100,6 +135,10 @@ def running_desktop(app, root, env, port):
     except Exception:
         # Surface host/runtime failures even when the inspector never gets a page.
         print("Windows GUI exit status:", proc.poll(), flush=True)
+        if page:
+            print("Rendered state:", page.js("({view,modal,libraryBusy:S.libraryBusy,media:S.media.map(m=>m.title),"
+                                             "last:S.events.slice(-4).map(e=>[e.kind,e.text]),files:S.files,"
+                                             "notices:document.getElementById('notices').innerText})"), flush=True)
         for path in ("json/version", "json/list"):
             try:
                 with urlopen(f"http://127.0.0.1:{port}/{path}", timeout=2) as response:
@@ -212,9 +251,16 @@ def verify(app, codex):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", required=True, type=Path)
-    parser.add_argument("--codex", required=True, type=Path)
+    parser.add_argument("--codex", type=Path)
+    parser.add_argument("--suite", choices=("all", "workspace", "board", "codex"), default="all")
     args = parser.parse_args()
     app = args.app.resolve(strict=True)
-    from native_windows_regression import verify_regression
-    verify_regression(app)
-    verify(app, args.codex.resolve(strict=True))
+    from native_windows_regression import verify_board, verify_workspace
+    if args.suite in ("all", "codex") and not args.codex:
+        parser.error("--codex is required to test the external Codex CLI")
+    if args.suite in ("all", "workspace"):
+        verify_workspace(app)
+    if args.suite in ("all", "board"):
+        verify_board(app)
+    if args.suite in ("all", "codex"):
+        verify(app, args.codex.resolve(strict=True))

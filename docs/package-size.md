@@ -13,7 +13,7 @@
 
 首次配置机器时，Linux 需要 GTK 3、JSON-GLib 与 WebKitGTK 4.1 或兼容的 4.0，Windows 需要 WebView2 Evergreen。上表只统计下载听序所需的发行文件，系统引擎的安装、应用缓存和会议材料另外占用磁盘。[运行环境和启动步骤](../README.md) · [v1.4.0 单文件与 SHA-256](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.4.0)
 
-如果继续压缩，优先比较 Windows FFmpeg 与 ffprobe 的共享库构建，再按真实会议录屏、音频输入和取帧用例评估 Linux 编解码组件。相比继续重写会议业务，这两处更直接影响发行体积。具体收益需要以保留相同输入格式和采集能力的成品测量。
+Windows 成品中，FFmpeg 和 ffprobe 两个压缩条目分别为 40.31 MB、40.20 MB，合计占下载文件的 **86.05%**。Linux 包展开后，x265、Codec2 和 libavcodec 各占约 15–16 MB，且部分依赖被多个命令共同使用。如果继续压缩，优先实测 Windows 共用编解码 DLL，并以真实会议录屏、音频输入和取帧用例验证 Linux 编解码组件的裁剪范围。展开尺寸不能直接换算成下载体积的节省量。
 
 ## v1.3.0 外置系统 Agent
 

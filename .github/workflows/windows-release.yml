@@ -70,6 +70,11 @@ jobs:
 
   windows:
     needs: fetch
+    name: Windows / ${{ matrix.suite }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [workspace, board, codex, accessibility]
     permissions:
       contents: read
     runs-on: windows-latest
@@ -118,7 +123,7 @@ jobs:
           Write-Host "System WebView2 version $version"
 
       - name: Install the official external Codex CLI for this test
-        id: verify_tools
+        if: matrix.suite == 'codex'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -134,19 +139,23 @@ jobs:
           if ($binary[0].FullName -ne $path) { Move-Item -LiteralPath $binary[0].FullName -Destination $path }
           & $path --version
           if ($LASTEXITCODE -ne 0) { throw 'Codex failed to start on Windows' }
-          python -m pip install websocket-client==1.8.0 pillow==11.3.0
+
+      - name: Install test clients
+        if: matrix.suite != 'accessibility'
+        run: python -m pip install websocket-client==1.8.0 pillow==11.3.0
 
       - name: Create and reopen a meeting with Windows UI Automation
+        if: matrix.suite == 'accessibility'
         shell: pwsh
         env:
           PYTHONUTF8: '1'
         run: |
           python -u tests/e2e/native_windows_uia.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')
 
-      - name: Run the GUI, receive a reply and resume the session after restart
-        if: ${{ !cancelled() && steps.verify_tools.outcome == 'success' }}
+      - name: Exercise the release with the system WebView2 runtime
+        if: matrix.suite != 'accessibility'
         shell: pwsh
         env:
           PYTHONUTF8: '1'
         run: |
-          python -u tests/e2e/native_windows_codex.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') --codex (Join-Path $env:RUNNER_TEMP 'System agents/codex.exe')
+          python -u tests/e2e/native_windows_codex.py --suite ${{ matrix.suite }} --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe') --codex (Join-Path $env:RUNNER_TEMP 'System agents/codex.exe')

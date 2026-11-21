@@ -7,7 +7,7 @@
 | 下载的 Tingsu-Windows-x86_64.exe | `9bdf6d4b0b597d20dbafce60e8ec98f79b6d02b8bbece4c37413c5d8804c13da` |
 | 内部 bin/tingsu-webview.exe | `eb2ff643291ed9747cf182d2167a29924f1d0449d3f4f75e14c93073b4364c64` |
 
-首次运行时，听序将自带组件解到 `%LOCALAPPDATA%\Tingsu\runtime\<资源包 SHA-256>\`。目录名对应整个资源包。窗口组件使用系统 WebView2 显示本地界面，其公开文件没有 Authenticode 签名。按同一份源代码和固定依赖重建后，窗口组件的 PE 机器代码段与发布样本一致。[窗口组件源码](../windows/native/webview.cpp) · [构建脚本](../windows/native/build-webview.py)
+首次运行时，听序将自带组件解到 `%LOCALAPPDATA%\Tingsu\runtime\<资源包 SHA-256>\`。目录名对应整个资源包。窗口组件使用系统 WebView2 显示本地界面，其公开文件没有 Authenticode 签名。用 v2.0.0 标签的源代码、脚本固定的依赖及原编译时的头文件路径重新构建后，窗口组件的全部 1,395,712 字节与公开样本完全一致。[窗口组件源码](../windows/native/webview.cpp) · [构建脚本](../windows/native/build-webview.py)
 
 用 PowerShell 在下载目录核对外层文件，并与对应版本的 SHA256SUMS 比较。组件已被隔离时，保留隔离记录即可。在安全软件记录中可一并核对检测名、文件路径及可用的文件指纹。[GitHub Release 与校验清单](https://github.com/zzttzzmyswy/tingsu/releases) · [360 软件申诉](https://open.soft.360.cn/)
 

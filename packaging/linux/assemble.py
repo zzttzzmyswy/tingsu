@@ -118,7 +118,12 @@ scanner = next(Path("/usr/lib").rglob("gst-plugin-scanner"))
 copy(scanner, prefix / "gst-plugin-scanner", binary=True)
 # The portal is a PipeWire client. Read its two shipped client profiles so
 # their module selections, including optional real-time support, stay in sync.
-modules, spa_plugins = set(), set()
+modules = set()
+# libpipewire and module-adapter also request these factories directly.
+spa_plugins = {
+    "support/libspa-dbus", "support/libspa-journal", "audiomixer/libspa-audiomixer",
+    "control/libspa-control", "videoconvert/libspa-videoconvert",
+}
 for name in ("client.conf", "client-rt.conf"):
     config = Path("/usr/share/pipewire") / name
     copy(config, usr / "share/pipewire" / name)

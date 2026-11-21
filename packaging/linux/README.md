@@ -8,6 +8,6 @@
 packaging/linux/build.sh
 ```
 
-脚本在 Ubuntu 22.04 容器内以 CGO 编译 Gio 桌面程序及 C ScreenCast 客户端，构建共享 FFmpeg 并归集音频工具与 PipeWire、GStreamer 插件。工作台使用宿主机图形驱动，随包的采集进程使用各自的媒体库。
+脚本在 Ubuntu 22.04 容器内以 CGO 编译 Gio 桌面程序及 C ScreenCast 客户端，归集音频工具与 PipeWire、GStreamer 截图插件。工作台使用宿主机图形驱动，随包的采集进程使用各自的媒体库。
 
 默认输出为 `dist/Tingsu-Linux-x86_64.AppImage`。可用 `TINGSU_BUILD_CACHE` 和 `TINGSU_DIST_DIR` 指定依赖缓存和输出目录。检查内容用 `./Tingsu-Linux-x86_64.AppImage --appimage-extract`。许可和包版本在解包后的 `usr/share/doc/tingsu/` 下。

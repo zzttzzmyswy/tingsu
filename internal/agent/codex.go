@@ -19,7 +19,7 @@ type codex struct {
 	scoped bool
 }
 
-func (b *codex) connect(ctx context.Context) error {
+func (b *codex) initialize(ctx context.Context) error {
 	args := []string{"app-server", "-c", `web_search="disabled"`}
 	for _, f := range []string{"apps", "plugins", "computer_use", "hooks", "image_generation"} {
 		args = append(args, "-c", "features."+f+"=false")
@@ -33,18 +33,22 @@ func (b *codex) connect(ctx context.Context) error {
 		return e
 	}
 	b.w = w
+	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.2.0"}, "capabilities": M{"experimentalApi": true}}); e != nil {
+		return e
+	}
+	return w.write(M{"method": "initialized"})
+}
+func (b *codex) connect(ctx context.Context) error {
 	ok := false
 	defer func() {
-		if !ok {
+		if !ok && b.w != nil {
 			b.close()
 		}
 	}()
-	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.0.0"}, "capabilities": M{"experimentalApi": true}}); e != nil {
+	if e := b.initialize(ctx); e != nil {
 		return e
 	}
-	if e = w.write(M{"method": "initialized"}); e != nil {
-		return e
-	}
+	w := b.w
 	a, e := w.call(ctx, "account/read", M{})
 	if e != nil {
 		return e
@@ -99,6 +103,20 @@ func (b *codex) sessions(ctx context.Context) ([]M, error) {
 		rows[i] = M{"id": m["id"], "title": cut(first(str(m["name"]), str(m["preview"]), str(m["id"])), 110)}
 	}
 	return rows, e
+}
+
+// CodexModels queries the installed CLI without creating a chat session or looking up its account.
+func CodexModels(ctx context.Context, cfg Config) ([]M, error) {
+	b := codex{cfg: cfg}
+	defer func() {
+		if b.w != nil {
+			b.close()
+		}
+	}()
+	if err := b.initialize(ctx); err != nil {
+		return nil, err
+	}
+	return b.catalog(ctx)
 }
 func (b *codex) catalog(ctx context.Context) ([]M, error) {
 	raw, e := b.pages(ctx, "model/list", M{"limit": 100})

@@ -194,24 +194,22 @@ func (b *bridge) openSession(a M) error {
 }
 func (b *bridge) loadCatalog(path string) {
 	cfg := b.agentConfig("codex")
-	if path != "" {
-		cfg.Executable = path
-	}
+	cfg.Executable = path
+	b.catalogQuery++
+	version := b.catalogQuery
+	delete(b.catalogs, "codex")
+	b.publish()
+	b.event("catalog-loading", "")
 	go func() {
-		ctx, cancel := context.WithTimeout(b.ctx, time.Minute)
+		ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 		defer cancel()
-		c, e := agent.New(cfg)
-		var rows []M
-		if e == nil {
-			defer c.Close()
-			e = c.Connect(ctx)
-		}
-		if e == nil {
-			rows, e = c.Catalog(ctx)
-		}
+		rows, e := agent.CodexModels(ctx, cfg)
 		b.post(func() {
+			if b.catalogQuery != version {
+				return
+			}
 			if e != nil {
-				b.fail(e)
+				b.event("catalog-error", e.Error())
 				return
 			}
 			b.catalogs["codex"] = rows

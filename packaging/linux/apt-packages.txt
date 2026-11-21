@@ -29,9 +29,4 @@ libxcb-xfixes0-dev
 libxcb-shape0-dev
 libasound2-dev
 libpulse-dev
-libdav1d-dev
-zlib1g-dev
-nasm
 make
-meson
-ninja-build

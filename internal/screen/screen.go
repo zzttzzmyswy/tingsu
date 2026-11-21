@@ -1,4 +1,4 @@
-// Package screen acquires images from a selected desktop window or meeting recording.
+// Package screen acquires images from a selected desktop window.
 package screen
 
 import (
@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +18,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zzttzzmyswy/tingsu/internal/media"
+	"golang.org/x/image/bmp"
 )
 
 func Desktop() string {
@@ -172,9 +174,11 @@ func (s *Session) run(ctx context.Context, dir string, selected *Window, onFrame
 			if err != nil {
 				return nil, err
 			}
-			c := command(op, "ffmpeg", "-nostdin", "-loglevel", "error", "-f", "image2pipe", "-c:v", "bmp", "-i", "pipe:0", "-frames:v", "1", "-filter_threads", "1", "-vf", "scale='min(1920,iw)':-1", "-threads", "1", "-c:v", "mjpeg", "-q:v", "3", "-f", "image2pipe", "pipe:1")
-			c.Stdin = bytes.NewReader(b)
-			return output(c)
+			img, err := bmp.Decode(bytes.NewReader(b))
+			if err != nil {
+				return nil, err
+			}
+			return media.JPEG(img, 1920, 0)
 		}
 	} else if selected != nil || Desktop() == "x11" {
 		var id string
@@ -193,6 +197,11 @@ func (s *Session) run(ctx context.Context, dir string, selected *Window, onFrame
 			}
 			id = string(m[1])
 		}
+		conn, win, err := openX11(id)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
 		take = func(op context.Context) ([]byte, error) {
 			if selected != nil {
 				choices, err := Windows(op)
@@ -210,7 +219,7 @@ func (s *Session) run(ctx context.Context, dir string, selected *Window, onFrame
 					return nil, errors.New("所选窗口已关闭或更换")
 				}
 			}
-			return output(command(op, "ffmpeg", "-nostdin", "-loglevel", "error", "-f", "x11grab", "-window_id", id, "-draw_mouse", "0", "-i", os.Getenv("DISPLAY"), "-frames:v", "1", "-vf", "scale='min(iw,1920)':-2", "-threads", "1", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1"))
+			return x11Frame(op, conn, win)
 		}
 	} else {
 		child, stop := context.WithCancel(ctx)
@@ -326,51 +335,4 @@ func readFrames(ctx context.Context, r io.Reader, frames chan<- []byte) error {
 			return ctx.Err()
 		}
 	}
-}
-func FileFrame(ctx context.Context, source string, seconds float64, dir string) (string, error) {
-	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
-		return "", errors.New("无效的画面时间")
-	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	f, err := os.CreateTemp(dir, "screen-*.jpg")
-	if err != nil {
-		return "", err
-	}
-	path := f.Name()
-	if err = f.Close(); err != nil {
-		os.Remove(path)
-		return "", err
-	}
-	op, end := context.WithTimeout(ctx, 25*time.Second)
-	defer end()
-	for _, tail := range []bool{false, true} {
-		a := []string{"-y", "-nostdin", "-loglevel", "error"}
-		if tail {
-			a = append(a, "-noaccurate_seek")
-		}
-		a = append(a, "-ss", strconv.FormatFloat(seconds, 'f', 4, 64), "-i", source, "-map", "0:v:0")
-		filter := "scale='min(iw,1920)':-2"
-		if tail {
-			filter = "setpts=PTS-STARTPTS," + filter
-		} else {
-			a = append(a, "-frames:v", "1")
-		}
-		a = append(a, "-vf", filter, "-threads", "1", "-c:v", "mjpeg", "-update", "1", "-f", "image2", path)
-		_, err = output(command(op, "ffmpeg", a...))
-		if err == nil {
-			if st, e := os.Stat(path); e == nil && st.Size() > 0 {
-				return path, nil
-			}
-		}
-		if op.Err() != nil {
-			break
-		}
-	}
-	os.Remove(path)
-	if err == nil {
-		err = errors.New("当前时间没有视频帧")
-	}
-	return "", err
 }

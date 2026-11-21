@@ -11,12 +11,9 @@ dest = Path(sys.argv[1])
 usr = dest / "usr"
 prefix = usr / "lib/tingsu"
 vendor = prefix / "native"
-media = Path("/opt/tingsu-media")
 licenses = usr / "share/doc/tingsu/third-party"
 multiarch = Path("/usr/lib/x86_64-linux-gnu")
 tools = (
-    "ffmpeg",
-    "ffprobe",
     "xwininfo",
     "pw-record",
     "pw-dump",
@@ -98,7 +95,7 @@ def install_licenses():
 
 
 for tool in tools:
-    path = media / "bin" / tool if tool in ("ffmpeg", "ffprobe") else Path(shutil.which(tool))
+    path = Path(shutil.which(tool))
     copy(path, usr / "bin" / tool, binary=True)
 for plugin in (
     "coreelements",
@@ -146,7 +143,6 @@ for path in (multiarch / "libpulsecommon-15.99.so",):
         path = next(multiarch.rglob("libpulsecommon-*.so"))
     copy(path, vendor / path.name, binary=True)
 
-tree(media / "licenses", licenses / "ffmpeg")
 copy(Path(sys.argv[2]), usr / "bin/tingsu-portal", binary=True)
 include_dependencies(elf_sources)
 install_licenses()

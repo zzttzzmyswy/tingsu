@@ -148,18 +148,14 @@ func writeChunk(dir string, pcm []byte) (string, error) {
 	return name, nil
 }
 
-// Capture uses media time for files and preserves pauses in live streams. A
-// stopped producer flushes complete PCM samples before returning to the caller.
-func Capture(ctx context.Context, source Source, dir string, chunk, offset float64, realtime bool, position func(float64), enqueue func(path string, start, end float64, peaks []float64) error) error {
-	if math.IsNaN(chunk) || math.IsInf(chunk, 0) || chunk < .05 || chunk > 600 || math.IsNaN(offset) || math.IsInf(offset, 0) || offset < 0 {
-		return errors.New("音频分片长度或起始时间无效")
-	}
-	if e := os.MkdirAll(dir, 0700); e != nil {
-		return e
-	}
+type Enqueue func(path string, start, end float64, peaks []float64) error
+type CaptureFunc func(context.Context, Source, string, float64, float64, func(float64), Enqueue) error
+
+// Capture drains the selected native device or application stream until stopped.
+func Capture(ctx context.Context, source Source, dir string, chunk, offset float64, position func(float64), enqueue Enqueue) error {
 	child, stop := context.WithCancel(ctx)
 	defer stop()
-	cmd, e := audioCommand(child, source, offset, realtime)
+	cmd, e := audioCommand(child, source)
 	if e != nil {
 		return e
 	}
@@ -172,6 +168,32 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 	if e = cmd.Start(); e != nil {
 		return e
 	}
+	e = CapturePCM(ctx, pipe, dir, chunk, offset, position, enqueue)
+	stop()
+	pipe.Close()
+	cmd.Wait()
+	if e != nil {
+		return e
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	detail := stderr.String()
+	if detail == "" {
+		detail = "音源已断开，请刷新音源并重新连接"
+	}
+	return fmt.Errorf("采集音频失败：%s", detail)
+}
+
+// CapturePCM chunks mono 16 kHz PCM, including the partial final chunk on stop.
+func CapturePCM(ctx context.Context, pipe io.Reader, dir string, chunk, offset float64, position func(float64), enqueue Enqueue) error {
+	if math.IsNaN(chunk) || math.IsInf(chunk, 0) || chunk < .05 || chunk > 600 || math.IsNaN(offset) || math.IsInf(offset, 0) || offset < 0 {
+		return errors.New("音频分片长度或起始时间无效")
+	}
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		return e
+	}
+	var e error
 	const sampleRate = float64(bytesPerSecond)
 	opening := &openingCut{}
 	steady := int(math.Round(chunk*Rate)) * 2
@@ -202,7 +224,7 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 		before := time.Now()
 		n, err := pipe.Read(block)
 		if n > 0 {
-			if source.Kind != "file" && time.Since(before) >= 150*time.Millisecond {
+			if time.Since(before) >= 150*time.Millisecond {
 				arrival := offset + time.Since(epoch).Seconds()
 				expected := cursor + float64(len(pending)+n)/sampleRate
 				if arrival-expected > .8 {
@@ -239,27 +261,14 @@ func Capture(ctx context.Context, source Source, dir string, chunk, offset float
 	}
 	if e == nil {
 		e = flush(len(pending) &^ 1)
-	} else {
-		stop()
 	}
-	waitErr := cmd.Wait()
 	if e != nil {
 		return e
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
-	if readErr != nil {
-		return readErr
-	}
-	if waitErr != nil || source.Kind != "file" {
-		detail := stderr.String()
-		if detail == "" {
-			detail = "音源已断开，请刷新音源并重新连接"
-		}
-		return fmt.Errorf("采集音频失败：%s", detail)
-	}
-	return nil
+	return readErr
 }
 
 type limitedBuffer struct{ b bytes.Buffer }

@@ -156,7 +156,8 @@ func TestRecordStopsAndDrainsTailAfterEmptyFirstResult(t *testing.T) {
 		}
 	}, Completed: func(string) { done <- struct{}{} }, Failed: func(_ string, msg string) { t.Error(msg) }})
 	defer a.Close()
-	if e := a.Record(mid, media.Source{ID: p, Kind: "file"}, Config{Provider: "siliconflow", APIKey: "fixture", Model: "fixture-asr"}, 12, 0); e != nil {
+	a.capture = replayPCM
+	if e := a.Record(mid, media.Source{ID: p}, Config{Provider: "siliconflow", APIKey: "fixture", Model: "fixture-asr"}, 12, 0); e != nil {
 		t.Fatal(e)
 	}
 	await(t, first)
@@ -294,7 +295,8 @@ func TestCloseDuringCapturePersistsPartialWAVAcrossProcessRestart(t *testing.T) 
 	t.Setenv("TINGSU_SILICONFLOW_URL", server.URL)
 	cfg := Config{Provider: "siliconflow", APIKey: "fixture", Model: "fixture"}
 	a := New(db, filepath.Join(dir, "audio"), Callbacks{})
-	if e = a.Record(mid, media.Source{ID: input, Kind: "file"}, cfg, 12, 0); e != nil {
+	a.capture = replayPCM
+	if e = a.Record(mid, media.Source{ID: input}, cfg, 12, 0); e != nil {
 		t.Fatal(e)
 	}
 	deadline := time.Now().Add(4 * time.Second)
@@ -391,4 +393,31 @@ func TestSophnetMultipartAndPolledMillisecondTimestamps(t *testing.T) {
 	if e != nil || len(ts) != 1 || ts[0].Text != "早安" || ts[0].Speaker != "发言人 04" || ts[0].Start != 8.2 || ts[0].End != 10.1 {
 		t.Fatal(ts, e)
 	}
+}
+
+func replayPCM(ctx context.Context, src media.Source, dir string, chunk, offset float64, position func(float64), enqueue media.Enqueue) error {
+	pcm, err := media.ReadWAV(src.ID)
+	if err != nil {
+		return err
+	}
+	r, w := io.Pipe()
+	defer r.Close()
+	go func() {
+		defer w.Close()
+		t := time.NewTicker(20 * time.Millisecond)
+		defer t.Stop()
+		for len(pcm) > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			n := min(len(pcm), media.Rate*2/50)
+			if _, err := w.Write(pcm[:n]); err != nil {
+				return
+			}
+			pcm = pcm[n:]
+		}
+	}()
+	return media.CapturePCM(ctx, r, dir, chunk, offset, position, enqueue)
 }

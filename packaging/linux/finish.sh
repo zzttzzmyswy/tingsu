@@ -24,7 +24,7 @@ install -m 644 "$project/internal/desktop/fonts/OFL.txt" "$licenses/ui-font.txt"
 # Keep the Go renderer on the desktop graphics stack. Only helper processes
 # should load the packaged multimedia libraries.
 mkdir -p "$appdir/usr/lib/tingsu/tools"
-for tool in ffmpeg ffprobe xwininfo tingsu-portal pactl parec arecord pw-record pw-dump; do
+for tool in xwininfo tingsu-portal pactl parec arecord pw-record pw-dump; do
     case "$tool" in
       pw-record|pw-dump) continue ;; # Their launchers select a private PipeWire ABI.
     esac
@@ -35,6 +35,10 @@ for tool in ffmpeg ffprobe xwininfo tingsu-portal pactl parec arecord pw-record 
 done
 if find "$appdir" \( -iname 'libpython*.so*' -o -type f -name 'python3.[0-9]*' -o -name '*.py' -o -name '*.pyc' \) -print | grep -q .; then
   echo "Python runtime found in AppDir" >&2
+  exit 1
+fi
+if find "$appdir/usr/bin" "$appdir/usr/lib" -type f \( -name ffmpeg -o -name ffprobe -o -name 'libavcodec.so*' -o -name 'libavformat.so*' -o -name 'libavdevice.so*' -o -name 'libavfilter.so*' -o -name 'libavutil.so*' -o -name 'libswscale.so*' -o -name 'libswresample.so*' \) -print | grep -q .; then
+  echo "Obsolete FFmpeg components in AppDir. Build from a clean staging directory." >&2
   exit 1
 fi
 work=$(mktemp -d)

@@ -42,6 +42,8 @@ type bridge struct {
 	generation                          int
 	sessions                            []M
 	catalogs                            M
+	catalogQuery                        int
+	screenLabel                         string
 	live                                *screen.Session
 	screenVersion                       int
 	windows                             map[string]screen.Window
@@ -155,7 +157,7 @@ func (b *bridge) publish() {
 	for k, v := range (M{"loginLink": b.loginURL != "", "fileSource": filepath.IsAbs(str(b.current()["source"])), "settings": b.settings.public(), "providers": providers, "agentCatalogs": b.catalogs,
 		"sources": sources, "capture": b.asr.Status(), "agent": b.status, "agentName": b.provider,
 		"agentWorkspace": workspace, "session": b.session, "sessions": b.sessions, "sending": sending, "queued": queued, "files": files, "frame": b.preview,
-		"screen": b.live != nil, "xwayland": screen.Desktop() == "wayland" && os.Getenv("DISPLAY") != "", "windowsDesktop": runtime.GOOS == "windows"}) {
+		"screenLabel": b.screenLabel, "screen": b.live != nil, "xwayland": screen.Desktop() == "wayland" && os.Getenv("DISPLAY") != "", "windowsDesktop": runtime.GOOS == "windows"}) {
 		state[k] = v
 	}
 	b.signal("state", encoded(state))
@@ -287,6 +289,7 @@ func (b *bridge) stopScreen() {
 		b.live.Stop()
 		b.live = nil
 	}
+	b.screenLabel = ""
 	b.frame = ""
 	b.preview = ""
 	b.frameRequest.Store(nil)

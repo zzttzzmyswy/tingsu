@@ -38,6 +38,13 @@ func (u *workbench) timeline(g C) D {
 		defer area.Pop()
 		btn.Add(g.Ops)
 		paint.FillShape(g.Ops, mint, clip.UniformRRect(image.Rect(0, 0, w, h), g.Dp(4)).Op(g.Ops))
+		if len(levels) == 0 {
+			for _, speech := range rows(u.state["trackSpeech"]) {
+				x := int((number(speech["at"]) - start) * float64(w) / (end - start))
+				right := int((number(speech["end"]) - start) * float64(w) / (end - start))
+				paint.FillShape(g.Ops, teal, clip.Rect(image.Rect(x, h/3, max(x+1, right), 2*h/3)).Op())
+			}
+		}
 		for i, v := range levels {
 			x := i * w / len(levels)
 			right := (i + 1) * w / len(levels)

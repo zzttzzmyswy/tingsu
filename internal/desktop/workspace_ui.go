@@ -28,6 +28,46 @@ func labelOf(opts []choice, id string) string {
 }
 func (u *workbench) shortcuts(g C) {
 	mod := key.ModShortcut
+	if u.modal == "" {
+		menus := []string{"menu/file", "menu/meeting", "menu/view", "menu/settings"}
+		for {
+			ev, ok := g.Event(key.Filter{Name: "F", Required: key.ModAlt}, key.Filter{Name: "M", Required: key.ModAlt}, key.Filter{Name: "V", Required: key.ModAlt}, key.Filter{Name: "S", Required: key.ModAlt}, key.Filter{Name: "F10"})
+			if !ok {
+				break
+			}
+			if k, ok := ev.(key.Event); ok && k.State == key.Press {
+				index := map[key.Name]int{"M": 1, "V": 2, "S": 3}[k.Name]
+				u.showPopup(menus[index], false)
+			}
+		}
+		for i, id := range menus {
+			if u.popup.id != id {
+				continue
+			}
+			if ev, ok := g.Event(key.Filter{Name: key.NameLeftArrow}, key.Filter{Name: key.NameRightArrow}); ok {
+				if k, ok := ev.(key.Event); ok && k.State == key.Press {
+					step := 1
+					if k.Name == key.NameLeftArrow {
+						step = -1
+					}
+					u.showPopup(menus[(i+len(menus)+step)%len(menus)], false)
+				}
+			}
+			break
+		}
+	}
+	if u.popup.id != "" {
+		for {
+			ev, ok := g.Event(key.Filter{Name: key.NameEscape})
+			if !ok {
+				break
+			}
+			if k, ok := ev.(key.Event); ok && k.State == key.Press {
+				u.closePopup()
+			}
+		}
+		return
+	}
 	for {
 		ev, ok := g.Event(key.Filter{Name: "L", Required: mod}, key.Filter{Name: "R", Required: mod}, key.Filter{Name: "G", Required: mod}, key.Filter{Name: "I", Required: mod}, key.Filter{Name: "J", Required: mod}, key.Filter{Name: ",", Required: mod}, key.Filter{Name: "N", Required: mod}, key.Filter{Name: "K", Required: mod}, key.Filter{Name: "F", Required: mod}, key.Filter{Name: "S", Required: mod}, key.Filter{Name: key.NameReturn, Required: mod}, key.Filter{Name: key.NameEscape})
 		if !ok {
@@ -44,14 +84,9 @@ func (u *workbench) shortcuts(g C) {
 		if u.modal == "" {
 			switch e.Name {
 			case "L":
-				u.sourceForm()
-				u.beginChoice("source", "选择音频来源", u.sourceChoices())
+				u.openAudio()
 			case "R":
-				if str(u.state["capture"]) == "recording" {
-					u.cmd("stop", nil)
-				} else {
-					u.cmd("start", nil)
-				}
+				u.toggleRecording()
 			case "G":
 				u.open("screen")
 				u.cmd("screen", nil)
@@ -69,21 +104,37 @@ func (u *workbench) shortcuts(g C) {
 			case "F":
 				u.openSearch()
 			case key.NameReturn:
+				u.finishEditing(g)
 				u.sendMessage()
 			}
 			continue
 		}
 		if e.Name == "S" || e.Name == key.NameReturn {
+			u.finishEditing(g)
 			u.submitForm()
 		}
 	}
 }
+
+// Text input and a save shortcut may arrive in the same frame. Apply pending
+// edits before reading the form or chat draft.
+func (u *workbench) finishEditing(g C) {
+	for _, ed := range u.editors {
+		if g.Focused(ed) {
+			for {
+				if _, ok := ed.Update(g); !ok {
+					break
+				}
+			}
+			return
+		}
+	}
+}
+
 func (u *workbench) back() {
 	switch u.modal {
 	case "message", "path":
 		u.dialogResult(false)
-	case "choice":
-		u.open(u.parentModal)
 	case "confirm":
 		u.open("")
 		u.confirm = nil
@@ -91,95 +142,9 @@ func (u *workbench) back() {
 		u.open("")
 	}
 }
-func (u *workbench) workspace(g C) D {
-	wide := g.Constraints.Max.X >= g.Dp(1030)
-	u.compact = !wide
-	parts := []layout.FlexChild{}
-	if wide {
-		parts = append(parts, layout.Rigid(func(g C) D {
-			w := g.Dp(204)
-			g.Constraints.Min.X = w
-			g.Constraints.Max.X = w
-			g.Constraints.Min.Y = g.Constraints.Max.Y
-			return box(g, dark, 0, inset(16, u.rail))
-		}))
-	}
-	parts = append(parts, layout.Flexed(1, func(g C) D {
-		return inset(14, func(g C) D {
-			return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Rigid(u.heading), layout.Rigid(layout.Spacer{Height: 10}.Layout), layout.Flexed(1, func(g C) D {
-				if !wide && u.page == "board" {
-					return u.board(g)
-				}
-				cols := []layout.FlexChild{layout.Flexed(1, u.feed)}
-				if wide {
-					cols = append(cols, layout.Rigid(layout.Spacer{Width: 12}.Layout), layout.Rigid(func(g C) D {
-						w := min(g.Dp(322), g.Constraints.Max.X/3)
-						g.Constraints.Min.X = w
-						g.Constraints.Max.X = w
-						return u.board(g)
-					}))
-				}
-				return (layout.Flex{}).Layout(g, cols...)
-			}))
-		})(g)
-	}))
-	return (layout.Flex{}).Layout(g, parts...)
-}
-func (u *workbench) rail(g C) D {
-	return (layout.Flex{Axis: layout.Vertical}).Layout(g,
-		layout.Rigid(col(12, u.text("听序", 30, paper, true), u.button("nav-new", "＋  新建会议", true, u.newMeeting), u.button("nav-history", "会议与主题", false, func() { u.open("history") }), u.button("nav-import", "导入逐字稿", false, u.importTranscript), u.button("nav-prefs", "偏好设置", false, u.settingsForm), u.text("最近会议", 13, rgb(0xc0dbcf), true))),
-		layout.Flexed(1, func(g C) D {
-			var ws []W
-			for _, m := range rows(u.state["meetings"]) {
-				id := str(m["id"])
-				ws = append(ws, u.button("recent"+id, str(m["title"]), id == str(u.meeting()["id"]), func() { u.cmd("select", M{"id": id}) }))
-			}
-			return u.scroll(g, "rail", ws)
-		}))
-}
-func (u *workbench) heading(g C) D {
-	m := u.meeting()
-	title := str(m["title"])
-	if title == "" {
-		title = "听序"
-	}
-	agent := labelOf(services, str(u.state["agentName"]))
-	if agent == "" {
-		agent = "连接 AI"
-	}
-	capture := str(u.state["capture"])
-	rec := "开始转写"
-	if capture == "recording" || capture == "stopping" {
-		rec = "停止转写"
-	}
-	actions := []W{u.button("capture", rec, true, func() {
-		if capture == "recording" || capture == "stopping" {
-			u.cmd("stop", nil)
-		} else if str(m["source"]) == "" || truth(m["demo"]) {
-			u.sourceForm()
-		} else {
-			u.cmd("start", nil)
-		}
-	}), u.button("agent", agent, false, func() { u.open("agent") }), u.button("menu", "工作台菜单", false, func() { u.open("menu") })}
-	if u.compact {
-		actions = append(actions, u.button("toggle-board", map[bool]string{true: "会议记录", false: "便签看板"}[u.page == "board"], false, func() {
-			if u.page == "board" {
-				u.page = "studio"
-			} else {
-				u.page = "board"
-			}
-		}))
-	}
-	meta := str(m["topic_name"])
-	if meta != "" {
-		meta += "   ·   "
-	}
-	meta += clockText(max(number(m["duration"]), u.position)) + "   ·   " + map[bool]string{true: "转写中", false: "会议记录"}[capture == "recording"]
-	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, col(2, u.text(title, 23, ink, true), u.text(meta, 13, muted, false))), layout.Rigid(row(5, actions...)))
-}
 func (u *workbench) pane(g C, content W) D {
 	g.Constraints.Min = g.Constraints.Max
-	return box(g, paper, 11, inset(14, content))
+	return box(g, paper, 0, inset(15, content))
 }
 func (u *workbench) feed(g C) D {
 	return u.pane(g, func(g C) D {
@@ -191,12 +156,14 @@ func (u *workbench) feed(g C) D {
 		}
 		return (layout.Flex{Axis: layout.Vertical}).Layout(g,
 			layout.Rigid(func(g C) D {
-				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("会议记录", 19, ink, true)), layout.Rigid(row(4, u.button("search", "查找", false, u.openSearch), u.button("filter", map[bool]string{true: "全部", false: kindLabel(u.feedKind)}[u.feedKind == ""], false, func() { u.open("filters") }))))
+				filter := []choice{{"", "全部记录"}, {"speech", "会议发言"}, {"assistant", "AI 回复"}, {"user", "我的消息"}}
+				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, col(3, u.text(str(u.meeting()["title"]), 22, ink, true), u.oneLine("会议记录", 13, muted))), layout.Rigid(fixedWidth(105, u.drop("feed/filter", labelOf(filter, u.feedKind), filter, u.feedKind, false, func(v string) { u.feedKind = v }))), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.button("find", "查找", false, u.openSearch)))
+
 			}),
 			layout.Rigid(u.timeline),
 			layout.Flexed(1, func(g C) D {
 				l := u.list("feed")
-				l.ScrollToEnd = true
+				l.ScrollToEnd = l.Position.Length > g.Constraints.Max.Y
 				extra := 0
 				if truth(u.state["older"]) {
 					extra = 1
@@ -256,7 +223,7 @@ func (u *workbench) eventRow(g C, e M) D {
 		tag := stamp + "   " + who
 		quote := tag + "\n" + str(e["text"])
 		header = func(g C) D {
-			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, teal, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("body").SetText(quote) }))))
+			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, teal, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("form/body").SetText(quote) }))))
 		}
 	}
 	content := []W{header, style.Layout}
@@ -290,7 +257,7 @@ func (u *workbench) composer(g C) D {
 		controls = append(controls, u.button(fmt.Sprint("file", i), f+" ×", false, func() { u.cmd("remove_file", M{"index": i}) }))
 	}
 	controls = append(controls, u.field("message", "向 AI 提问或补充会议内容…", true, false))
-	actions := []W{u.button("attach", "附件", false, func() { u.cmd("attach", nil) }), u.button("share", "会议画面", false, func() { u.open("screen") })}
+	actions := []W{u.button("attach", "附件", false, func() { u.cmd("attach", nil) })}
 	if truth(u.state["sending"]) {
 		actions = append(actions, u.button("stop-reply", "停止回复", false, func() { u.cmd("cancel_agent", nil) }))
 	}
@@ -310,7 +277,15 @@ func (u *workbench) board(g C) D {
 				tab = append(tab, u.button("scope"+v.id, v.label, (v.id == "topic") == u.topicBoard, func() { u.topicBoard = v.id == "topic" }))
 			}
 		}
-		tab = append(tab, u.button("board-filter", "筛选", false, func() { u.open("board-filters") }))
+		options := append([]choice{{"", "全部类型"}}, kinds...)
+		kindFilter := fixedWidth(105, u.drop("board/kind", labelOf(options, u.boardKind), options, u.boardKind, false, func(v string) { u.boardKind = v }))
+		statusOptions := append([]choice{{"pending", "未完成"}, {"", "全部状态"}}, statuses...)
+		filterStatus := func(g C) D {
+			if !u.topicBoard {
+				return D{}
+			}
+			return fixedWidth(110, u.drop("board/status", labelOf(statusOptions, u.boardStatus), statusOptions, u.boardStatus, false, func(v string) { u.boardStatus = v }))(g)
+		}
 		key := "notes"
 		if u.topicBoard {
 			key = "topicNotes"
@@ -355,7 +330,7 @@ func (u *workbench) board(g C) D {
 			layout.Rigid(func(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("便签看板", 19, ink, true)), layout.Rigid(u.button("add-note", "＋ 新建", true, func() { u.editNote(nil) })))
 			}),
-			layout.Rigid(func(g C) D { return (layout.Inset{Top: 8, Bottom: 8}).Layout(g, row(4, tab...)) }), layout.Flexed(1, func(g C) D { return u.scroll(g, "board", cards) }))
+			layout.Rigid(func(g C) D { return (layout.Inset{Top: 8, Bottom: 8}).Layout(g, row(4, tab...)) }), layout.Rigid(padding{Bottom: 8}.Wrap(row(6, kindFilter, filterStatus))), layout.Flexed(1, func(g C) D { return u.scroll(g, "board", cards) }))
 	})
 }
 func (u *workbench) jump(at float64) {
@@ -381,11 +356,8 @@ func (u *workbench) search(offset int) {
 	u.cmd("search_events", M{"meeting": u.meeting()["id"], "id": u.querySerial, "query": u.val("query"), "speaker": u.fields["speaker"], "filter": u.fields["filter"], "offset": offset})
 }
 func (u *workbench) newMeeting() {
-	u.form("new", map[string]string{"title": "", "topic_id": "", "topic_name": "", "source": ""}, "title")
-}
-func (u *workbench) sourceForm() {
-	u.form("source", map[string]string{"source": str(u.meeting()["source"])}, "")
 	u.cmd("sources", nil)
+	u.form("new", map[string]string{"title": "", "topic_id": "", "topic_name": "", "source": ""}, "title")
 }
 func (u *workbench) importTranscript() { u.cmd("import_transcript", nil) }
 func (u *workbench) editNote(n M) {
@@ -441,15 +413,6 @@ func (u *workbench) submitForm() {
 		u.open("")
 	case "topic":
 		u.cmd("set_meeting_topic", M{"meeting": u.meeting()["id"], "topic_id": u.fields["topic_id"], "topic_name": u.val("topic_name")})
-	case "choice":
-		q := strings.ToLower(u.edit("choice-search").Text())
-		for _, o := range u.choices {
-			if strings.Contains(strings.ToLower(o.label), q) {
-				u.fields[u.choiceKey] = o.id
-				u.open(u.parentModal)
-				break
-			}
-		}
 	case "windows":
 		q := strings.ToLower(u.edit("window-search").Text())
 		for _, w := range u.windows {
@@ -463,9 +426,7 @@ func (u *workbench) submitForm() {
 		u.acceptPath()
 	case "search":
 		u.search(0)
-	case "source":
-		u.cmd("set_source", M{"id": u.fields["source"]})
-		u.open("")
+
 	}
 }
 func (u *workbench) settingsForm() {
@@ -486,6 +447,12 @@ func (u *workbench) settingsForm() {
 	}
 	v["sophnet_key"] = ""
 	v["siliconflow_key"] = ""
+	u.prefsTab = "asr"
+	u.localCLI = str(s["agent"])
+	if u.localCLI == "" || u.localCLI == "openai" {
+		u.localCLI = "codex"
+	}
+	u.custom = map[string]bool{}
 	u.form("settings", v, "")
 }
 func (u *workbench) savePrefs() {
@@ -499,7 +466,7 @@ func (u *workbench) savePrefs() {
 	for _, k := range []string{"auto", "share_frames"} {
 		a[k] = u.fields[k] == "true"
 	}
-	chunk, err := strconv.Atoi(u.val("chunk"))
+	chunk, err := strconv.Atoi(u.fields["chunk"])
 	if err != nil || chunk < 4 || chunk > 45 {
 		u.toast("分段长度须为 4–45 秒", "error")
 		return

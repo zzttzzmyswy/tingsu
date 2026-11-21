@@ -9,9 +9,8 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 docker build -t tingsu-go-linux-builder:22.04 "$build_dir"
 docker run --rm -v "$work:/work" -v "$cache:/assets:ro" -v "$build_dir:/build:ro" -v "$root/desktop:/desktop:ro" \
   -e BUILD_UID="$(id -u)" -e BUILD_GID="$(id -g)" tingsu-go-linux-builder:22.04 sh -ec '
-  /build/build-media.sh /assets
   /desktop/portal/build.sh /work/tingsu-portal
-  LD_LIBRARY_PATH=/opt/tingsu-media/lib python3 /build/assemble.py /work/AppDir /work/tingsu-portal
+  python3 /build/assemble.py /work/AppDir /work/tingsu-portal
   chown -R "$BUILD_UID:$BUILD_GID" /work
 '
 "$build_dir/finish.sh" "$work/AppDir" "$cache"

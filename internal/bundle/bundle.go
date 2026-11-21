@@ -91,8 +91,7 @@ func Prepare() error {
 }
 
 // Check app-owned executable components against the verified package even when
-// reusing an existing cache. The separately replaceable FFmpeg libraries are
-// intentionally outside this list.
+// reusing an existing cache.
 func verifyComponents(archive *zip.Reader, dir string) error {
 	for _, name := range []string{"bin/tingsu-host.exe", "bin/tingsu-capture.exe"} {
 		src, err := archive.Open(name)

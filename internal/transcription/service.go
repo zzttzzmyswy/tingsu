@@ -31,6 +31,7 @@ type run struct {
 	position                                  float64
 }
 type Service struct {
+	capture    media.CaptureFunc
 	db         *store.Store
 	root       string
 	cb         Callbacks
@@ -45,7 +46,7 @@ type Service struct {
 
 func New(db *store.Store, audioRoot string, cb Callbacks) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Service{db: db, root: audioRoot, cb: cb, client: defaultClient(), ctx: ctx, cancel: cancel}
+	return &Service{capture: media.Capture, db: db, root: audioRoot, cb: cb, client: defaultClient(), ctx: ctx, cancel: cancel}
 }
 func (s *Service) changed() {
 	if s.cb.Changed != nil {
@@ -148,7 +149,7 @@ func (s *Service) Record(mid string, src media.Source, cfg Config, chunkSeconds,
 	go func() {
 		defer cancel()
 		dir := filepath.Join(s.root, mid)
-		err := media.Capture(recordCtx, src, dir, chunkSeconds, startSeconds, true, func(pos float64) { s.mu.Lock(); r.position = pos; s.mu.Unlock() }, func(path string, start, end float64, peaks []float64) error {
+		err := s.capture(recordCtx, src, dir, chunkSeconds, startSeconds, func(pos float64) { s.mu.Lock(); r.position = pos; s.mu.Unlock() }, func(path string, start, end float64, peaks []float64) error {
 			if e := s.db.Queue(mid, store.Job{Path: path, Start: start, End: end}, peaks); e != nil {
 				return e
 			}

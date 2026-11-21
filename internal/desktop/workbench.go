@@ -68,41 +68,49 @@ func clockText(t float64) string {
 }
 
 type workbench struct {
-	timelineClick                       gesture.Click
-	compact                             bool
-	window                              *app.Window
-	th                                  *material.Theme
-	send                                func(packet)
-	mu                                  sync.Mutex
-	inbox                               []M
-	wake                                chan struct{}
-	quitting                            bool
-	state                               M
-	page, modal, focus                  string
-	noticeText, noticeKind              string
-	noticeUntil                         time.Time
-	buttons                             map[string]*widget.Clickable
-	editors                             map[string]*widget.Editor
-	selectable                          map[string]*widget.Selectable
-	lists                               map[string]*widget.List
-	fields                              map[string]string
-	drafts                              map[string]string
-	note                                M
-	topicBoard                          bool
-	boardKind, boardStatus, feedKind    string
-	stream, frameURI                    string
-	frame                               paint.ImageOp
-	hasFrame                            bool
-	position                            float64
-	dlg                                 M
-	confirm                             func()
-	windows                             []M
-	results                             M
-	querySerial                         int
-	pendingSend                         string
-	nextFocus                           *widget.Editor
-	choices                             []choice
-	choiceKey, choiceTitle, parentModal string
+	timelineClick                    gesture.Click
+	popup                            popupState
+	surface, pointerAt               image.Point
+	railWidth, boardWidth            float32
+	railDrag, boardDrag              panelDrag
+	hideRail, hideBoard              bool
+	prefsTab, localCLI               string
+	checks                           map[string]*widget.Bool
+	custom                           map[string]bool
+	catalogBusy                      bool
+	catalogError                     string
+	window                           *app.Window
+	th                               *material.Theme
+	send                             func(packet)
+	mu                               sync.Mutex
+	inbox                            []M
+	wake                             chan struct{}
+	quitting                         bool
+	state                            M
+	modal                            string
+	noticeText, noticeKind           string
+	noticeUntil                      time.Time
+	buttons                          map[string]*widget.Clickable
+	editors                          map[string]*widget.Editor
+	selectable                       map[string]*widget.Selectable
+	lists                            map[string]*widget.List
+	fields                           map[string]string
+	drafts                           map[string]string
+	note                             M
+	topicBoard                       bool
+	boardKind, boardStatus, feedKind string
+	stream, frameURI                 string
+	frame                            paint.ImageOp
+	hasFrame                         bool
+	position                         float64
+	dlg                              M
+	confirm                          func()
+	windows                          []M
+	results                          M
+	querySerial                      int
+	pendingSend                      string
+	nextFocus                        *widget.Editor
+	choiceTitle                      string
 }
 
 //go:embed fonts/TingsuSans.otf
@@ -110,7 +118,7 @@ var interfaceFont []byte
 
 func newWorkbench(send func(packet)) *workbench {
 	u := &workbench{window: new(app.Window), th: material.NewTheme(), send: send, wake: make(chan struct{}, 1),
-		state: M{}, buttons: map[string]*widget.Clickable{}, editors: map[string]*widget.Editor{}, selectable: map[string]*widget.Selectable{}, lists: map[string]*widget.List{}, fields: map[string]string{}, drafts: map[string]string{}, page: "studio", boardStatus: "pending"}
+		railWidth: 210, boardWidth: 325, checks: map[string]*widget.Bool{}, custom: map[string]bool{}, state: M{}, buttons: map[string]*widget.Clickable{}, editors: map[string]*widget.Editor{}, selectable: map[string]*widget.Selectable{}, lists: map[string]*widget.List{}, fields: map[string]string{}, drafts: map[string]string{}, boardStatus: "pending"}
 	faces, err := opentype.ParseCollection(interfaceFont)
 	if err == nil {
 		u.th.Shaper = text.NewShaper(text.WithCollection(faces))
@@ -152,6 +160,15 @@ func (u *workbench) drain() {
 				}(m)
 			default:
 				u.open("message")
+			}
+		case "cli-path":
+			if u.modal == "settings" && u.localCLI == str(m["provider"]) {
+				if files := stringsOf(m["value"]); len(files) > 0 {
+					u.edit("form/" + u.localCLI + "_path").SetText(files[0])
+				}
+				if err, ok := m["error"].(error); ok {
+					u.toast(err.Error(), "error")
+				}
 			}
 		case "file-result":
 			if _, ok := m["error"].(error); ok {
@@ -211,9 +228,9 @@ func (u *workbench) drain() {
 			case "event":
 				switch first {
 				case "workspace":
-					u.page = "studio"
 					u.open("")
 				case "choose":
+					u.fields = map[string]string{"session-choice": str(obj(u.state["meetingSessions"])[str(u.state["agentName"])])}
 					u.open("agent")
 				case "connected", "topic-saved", "settings-saved":
 					u.open("")
@@ -227,6 +244,15 @@ func (u *workbench) drain() {
 					if u.edit("message").Text() == u.pendingSend {
 						u.edit("message").SetText("")
 					}
+				case "catalog-loading":
+					u.catalogBusy = true
+					u.catalogError = ""
+				case "agent-catalog":
+					u.catalogBusy = false
+					u.catalogError = ""
+				case "catalog-error":
+					u.catalogBusy = false
+					u.catalogError = second
 				case "position":
 					u.position, _ = strconv.ParseFloat(second, 64)
 				case "screen-windows":
@@ -248,7 +274,7 @@ func (u *workbench) drain() {
 	}
 }
 func (u *workbench) configuredWindow(w *app.Window) {
-	w.Option(app.Title("听序 · 会议工作台"), app.Size(1240, 790), app.MinSize(680, 480))
+	w.Option(app.Title("听序 · 会议工作台"), app.Size(1240, 790), app.MinSize(720, 500))
 }
 func (u *workbench) run() error {
 	u.configuredWindow(u.window)
@@ -316,6 +342,7 @@ func (u *workbench) list(id string) *widget.List {
 	return u.lists[id]
 }
 func (u *workbench) open(id string) {
+	u.popup = popupState{}
 	u.modal = id
 	u.window.Invalidate()
 	delete(u.lists, "form")
@@ -356,11 +383,14 @@ func (u *workbench) button(id, s string, primary bool, fn func()) W {
 		}
 		style := material.Button(u.th, btn, s)
 		style.TextSize = 13
-		style.CornerRadius = 7
+		style.CornerRadius = 4
 		style.Inset = layout.Inset{Top: 7, Bottom: 7, Left: 11, Right: 11}
 		if !primary {
-			style.Background = mint
-			style.Color = teal
+			style.Background = rgb(0xeaf0ee)
+			if btn.Hovered() || g.Focused(btn) {
+				style.Background = mint
+			}
+			style.Color = ink
 		}
 		return style.Layout(g)
 	}
@@ -428,20 +458,38 @@ func (u *workbench) layout(g C) D {
 		g.Execute(key.FocusCmd{Tag: u.nextFocus})
 		u.nextFocus = nil
 	}
-	return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Flexed(1, func(g C) D {
-		if u.modal != "" {
-			return u.modalLayout(g)
+	u.surface = g.Constraints.Max
+	body := g
+	if u.modal != "" {
+		body = g.Disabled()
+	}
+	(layout.Flex{Axis: layout.Vertical}).Layout(body, layout.Flexed(1, u.workspace), layout.Rigid(rule), layout.Rigid(u.statusBar))
+	if u.modal != "" {
+		paint.Fill(g.Ops, color.NRGBA{20, 39, 38, 76})
+		u.modalLayout(g)
+	}
+	if u.popup.id != "" {
+		bg := u.click("close-popup")
+		for bg.Clicked(g) {
+			u.closePopup()
 		}
-		return u.workspace(g)
-	}), layout.Rigid(func(g C) D {
-		if u.noticeText == "" || g.Now.After(u.noticeUntil) {
-			return D{}
+		context := g
+		// Keep the other top-level menus clickable while a menu is open.
+		dy := 0
+		if strings.HasPrefix(u.popup.id, "menu/") {
+			dy = g.Dp(34)
 		}
-		g.Execute(op.InvalidateCmd{At: u.noticeUntil})
-		c := teal
-		if u.noticeKind == "error" {
-			c = rgb(0x983c33)
-		}
-		return box(full(g), c, 0, inset(9, u.text(u.noticeText, 14, paper, false)))
-	}))
+		t := op.Offset(image.Pt(0, dy)).Push(g.Ops)
+		bg.Layout(context, func(C) D { return D{Size: g.Constraints.Max.Sub(image.Pt(0, dy))} })
+		t.Pop()
+	}
+	u.trackPointer(g)
+	return D{Size: u.surface}
+}
+
+func (u *workbench) check(id string) *widget.Bool {
+	if u.checks[id] == nil {
+		u.checks[id] = new(widget.Bool)
+	}
+	return u.checks[id]
 }

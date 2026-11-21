@@ -91,7 +91,7 @@ func Run(args []string) error {
 				os.Setenv("TINGSU_CAPTURE_DESKTOP", a[2:])
 			}
 		case "--version":
-			fmt.Println("Tingsu 2.1.0")
+			fmt.Println("Tingsu 2.2.0")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)

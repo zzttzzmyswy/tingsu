@@ -4,36 +4,23 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"os"
-	"os/exec"
+
 	"path/filepath"
 	"slices"
 	"testing"
 )
 
 func TestCaptureShortFirstThenNormalChunksAndExactTail(t *testing.T) {
-	if _, e := exec.LookPath("ffmpeg"); e != nil {
-		t.Skip("requires ffmpeg")
-	}
 	dir := t.TempDir()
 	n := Rate*19 + 31
 	pcm := make([]byte, n*2)
 	for i := range pcm {
 		pcm[i] = byte(i*241 + 17)
 	}
-	input := filepath.Join(dir, "input.wav")
-	f, e := os.Create(input)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = WriteWAV(f, pcm); e != nil {
-		t.Fatal(e)
-	}
-	f.Close()
 	var got []byte
 	var sizes []int
 	clock := 0.
-	e = Capture(context.Background(), Source{ID: input, Kind: "file"}, filepath.Join(dir, "chunks"), 12, 0, false, func(float64) {}, func(path string, a, b float64, peaks []float64) error {
+	e := CapturePCM(context.Background(), bytes.NewReader(pcm), filepath.Join(dir, "chunks"), 12, 0, func(float64) {}, func(path string, a, b float64, peaks []float64) error {
 		p, e := ReadWAV(path)
 		if e != nil {
 			return e

@@ -16,11 +16,9 @@ ROOT = HERE.parent.parent
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--media", required=True, type=Path, help="Prefix produced by build-media.sh")
     parser.add_argument("--dist", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     args.dist.mkdir(parents=True, exist_ok=True)
-    media = args.media.resolve()
     with tempfile.TemporaryDirectory(dir=args.dist) as temp:
         work = Path(temp)
         env = dict(os.environ, CGO_ENABLED="0", GOOS="windows", GOARCH="amd64")
@@ -44,19 +42,10 @@ def main():
         def tree(folder, prefix):
             return [(p, prefix + "/" + p.relative_to(folder).as_posix()) for p in folder.rglob("*") if p.is_file()]
         files = [(p, "licenses/native/" + p.name) for p in (HERE / "licenses").iterdir() if p.is_file() and p.name not in ("WebView2-NOTICE.txt","WebView2-LICENSE.txt","nlohmann-json-LICENSE.txt")]
-        files += tree(notices, "licenses/go") + tree(media / "licenses", "licenses/ffmpeg")
-        files += [(ROOT / "LICENSE", "licenses/tingsu/LICENSE"), (ROOT / "THIRD_PARTY.md", "licenses/tingsu/THIRD_PARTY.md"),
-                  (HERE / "build-media.sh", "licenses/ffmpeg/build-media.sh")]
-        for f in ["ffmpeg.exe", "ffprobe.exe", "avcodec-63.dll", "avdevice-63.dll", "avfilter-12.dll", "avformat-63.dll",
-                  "avutil-61.dll", "swresample-7.dll", "swscale-10.dll"]:
-            files.append((media / "bin" / f, "bin/" + f))
-        for path in (media / "bin").glob("lib*.dll"):
-            files.append((path, "bin/" + path.name))
+        files += tree(notices, "licenses/go")
+        files += [(ROOT / "LICENSE", "licenses/tingsu/LICENSE"), (ROOT / "THIRD_PARTY.md", "licenses/tingsu/THIRD_PARTY.md")]
         for f in ["tingsu-capture.exe", "tingsu-host.exe"]:
             files.append((ROOT / "meeting_agent/native" / f, "bin/" + f))
-        for name in ("ffmpeg-LGPL-2.1.txt", "dav1d.txt", "zlib.txt"):
-            if not (media / "licenses" / name).is_file():
-                raise ValueError("Missing FFmpeg distribution notice: " + name)
         files.append((ROOT / "internal/desktop/fonts/OFL.txt", "licenses/tingsu/ui-font.txt"))
         payload = work / "resources.zip"
         with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:

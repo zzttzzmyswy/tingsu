@@ -3,6 +3,7 @@
 import argparse
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -31,44 +32,38 @@ def verify(recording, evidence):
     score = validate_audio(recording, evidence)
     files = sorted(evidence.glob("profile/Tingsu/data/frames/*/screen-*.jpg"))
     assert len(files) >= 2, "Expected at least two independently requested frames"
-    dims = subprocess.check_output(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=p=0",
-            recording,
-        ],
-        text=True,
-    )
-    w, h = map(int, dims.strip().split(","))
-    source = subprocess.check_output(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-ss",
-            "299",
-            "-i",
-            recording,
-            "-t",
-            "95",
-            "-an",
-            "-vf",
-            "fps=1,scale=128:72",
-            "-pix_fmt",
-            "gray",
-            "-f",
-            "rawvideo",
-            "pipe:1",
-        ]
-    )
-    refs = np.frombuffer(source, dtype=np.uint8).reshape(-1, 128 * 72).astype(float)
+    with tempfile.TemporaryDirectory() as temp:
+        subprocess.run(
+            [
+                "mpv",
+                "--no-config",
+                "--no-terminal",
+                "--no-audio",
+                "--untimed",
+                "--vo=image",
+                "--vo-image-format=png",
+                "--vo-image-high-bit-depth=no",
+                "--vo-image-outdir=" + temp,
+                "--start=299",
+                "--length=95",
+                "--vf=fps=1,scale=256:-2",
+                "--",
+                recording,
+            ],
+            check=True,
+            timeout=120,
+        )
+        frames = sorted(Path(temp).glob("*.png"))
+        assert frames, "The reference player returned no frames"
+        with Image.open(frames[0]) as im:
+            w, h = im.size
+        refs = []
+        for frame in frames:
+            with Image.open(frame) as im:
+                refs.append(
+                    np.asarray(im.convert("L").resize((128, 72)), dtype=float).ravel()
+                )
+        refs = np.stack(refs)
     refs -= refs.mean(axis=1, keepdims=True)
     frames = []
     for f in files:

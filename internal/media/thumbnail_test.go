@@ -6,16 +6,12 @@ import (
 	"image/color"
 	"image/jpeg"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestThumbnailOfStandaloneJPEG(t *testing.T) {
-	if _, e := exec.LookPath("ffmpeg"); e != nil {
-		t.Skip("requires FFmpeg")
-	}
 	p := filepath.Join(t.TempDir(), "会议画面.jpg")
 	f, e := os.Create(p)
 	if e != nil {

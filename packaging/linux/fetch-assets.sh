@@ -32,5 +32,3 @@ download libpipewire-0.3-modules.deb "$pw_base/libpipewire-0.3-modules_$pw_versi
 download libspa-0.2-modules.deb "$pw_base/libspa-0.2-modules_$pw_version" 791380c7bcd699a34f8b6a3756db225ea167f0b1ad058eff2e0600670e81cb70
 download runtime https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64 617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46
 curl --fail --silent --show-error --location --retry 3 --output "$cache/runtime-LICENSE" https://raw.githubusercontent.com/AppImage/type2-runtime/fedfad51acc2860b2916a1eef32ba4a500ff31ef/LICENSE
-download ffmpeg-9.1.tar.xz https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz 1a4d394ae63d190a526cd052eb4415c156b5c5e2df37efab41a7de0b8fde2433
-download dav1d-1.5.1.tar.xz https://download.videolan.org/pub/videolan/dav1d/1.5.1/dav1d-1.5.1.tar.xz 401813f1f89fa8fd4295805aa5284d9aed9bc7fc1fdbe554af4292f64cbabe21

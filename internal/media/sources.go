@@ -143,7 +143,7 @@ func pulseSources(ctx context.Context) []Source {
 var alsaDevice = regexp.MustCompile(`(?m)^(\d+)-(\d+):\s*([^:]+):.*\bcapture\s+[1-9]`)
 
 func alsaSources() []Source {
-	if !avail("arecord") && !avail("ffmpeg") {
+	if !avail("arecord") {
 		return nil
 	}
 	b, _ := os.ReadFile("/proc/asound/pcm")
@@ -194,19 +194,9 @@ func Sources(ctx context.Context) ([]Source, error) {
 	slices.SortStableFunc(out, func(a, b Source) int { return rank(a) - rank(b) })
 	return out, ctx.Err()
 }
-func audioCommand(ctx context.Context, s Source, offset float64, realtime bool) (*exec.Cmd, error) {
+func audioCommand(ctx context.Context, s Source) (*exec.Cmd, error) {
 	id := s.ID
 	switch s.Kind {
-	case "file":
-		if st, e := os.Stat(id); e != nil || !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("找不到录音或录屏文件：%s", id)
-		}
-		a := []string{"-hide_banner", "-nostdin", "-loglevel", "error"}
-		if realtime {
-			a = append(a, "-re")
-		}
-		a = append(a, "-ss", strconv.FormatFloat(offset, 'f', -1, 64), "-i", id, "-map", "0:a:0", "-ac", "1", "-af", "aresample=16000:async=1:first_pts=0", "-f", "s16le", "pipe:1")
-		return command(ctx, "ffmpeg", a...), nil
 	case "win-mic", "win-app", "win-monitor":
 		return command(ctx, "tingsu-capture.exe", "audio", s.Kind, id), nil
 	case "pipewire-mic", "pipewire-monitor", "pipewire-app":
@@ -244,10 +234,7 @@ func audioCommand(ctx context.Context, s Source, offset float64, realtime bool) 
 		}
 		return command(ctx, "parec", append(a, "--device", id)...), nil
 	case "alsa-mic":
-		if avail("arecord") {
-			return command(ctx, "arecord", "-q", "-D", id, "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1"), nil
-		}
-		return command(ctx, "ffmpeg", "-nostdin", "-loglevel", "error", "-f", "alsa", "-i", id, "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"), nil
+		return command(ctx, "arecord", "-q", "-D", id, "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1"), nil
 	default:
 		return nil, fmt.Errorf("未知音源类型：%s", s.Kind)
 	}

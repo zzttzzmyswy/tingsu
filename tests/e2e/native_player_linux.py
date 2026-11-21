@@ -19,9 +19,11 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import wave
+from xml.etree import ElementTree as ET
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -42,30 +44,29 @@ def wait(label, fn, seconds=32):
 
 
 def validate_audio(recording, folder):
-    ref = np.frombuffer(
-        subprocess.check_output(
+    with tempfile.TemporaryDirectory() as temp:
+        pcm = Path(temp) / "reference.pcm"
+        subprocess.run(
             [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-ss",
-                "299",
-                "-i",
+                "mpv",
+                "--no-config",
+                "--no-terminal",
+                "--no-video",
+                "--start=299",
+                "--length=95",
+                "--audio-format=s16",
+                "--audio-channels=mono",
+                "--audio-samplerate=16000",
+                "--ao=pcm",
+                "--ao-pcm-waveheader=no",
+                "--ao-pcm-file=" + str(pcm),
+                "--",
                 recording,
-                "-t",
-                "95",
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-f",
-                "s16le",
-                "pipe:1",
-            ]
-        ),
-        dtype="<i2",
-    ).astype(float)
+            ],
+            check=True,
+            timeout=90,
+        )
+        ref = np.fromfile(pcm, dtype="<i2").astype(float)
     best = 0
     for name in sorted(folder.glob("audio-*.wav")):
         with wave.open(str(name), "rb") as w:
@@ -272,6 +273,23 @@ def run(args):
             f"[screencast]\nchooser_type=dmenu\nchooser_cmd={picker}\nmax_fps=10\n"
         )
         if wl:
+            # The service may initialize its database before its Wayland window
+            # is mapped. Focus that specific top-level before sending UI input.
+            rc = ET.Element("labwc_config")
+            bind = ET.SubElement(ET.SubElement(rc, "keyboard"), "keybind", key="F12")
+            each = ET.SubElement(bind, "action", name="ForEach")
+            ET.SubElement(ET.SubElement(each, "query"), "title").text = "*会议工作台*"
+            actions = ET.SubElement(each, "then")
+            ET.SubElement(actions, "action", name="Focus")
+            ET.SubElement(actions, "action", name="Raise")
+            focused = root / "workbench-mapped"
+            ET.SubElement(
+                actions,
+                "action",
+                name="Execute",
+                command=shlex.join(["touch", str(focused)]),
+            )
+            ET.ElementTree(rc).write(config / "rc.xml", encoding="utf-8")
             env.update(
                 WAYLAND_DISPLAY="wayland-0",
                 WLR_BACKENDS="headless",
@@ -309,6 +327,10 @@ def run(args):
         start("pulse", ["pipewire-pulse"])
         wait("Pulse", lambda: cmd("pactl", "info"))
         cmd("pactl", "load-module", "module-null-sink", "sink_name=qa_output")
+        wait(
+            "test playback device",
+            lambda: b"qa_output" in cmd("pactl", "list", "short", "sinks"),
+        )
         cmd("pactl", "set-default-sink", "qa_output")
         if wl:
             start("portal-backend", ["/usr/lib/xdg-desktop-portal-wlr", "-l", "DEBUG"])
@@ -335,7 +357,14 @@ def run(args):
         )
         start("app", [app, "--" + args.protocol])
         wait("meeting DB", lambda: dbcount("select count(*) from meetings"))
-        if not wl:
+        if wl:
+
+            def focus_workbench():
+                cmd(args.wtype, "-k", "F12")
+                return focused.exists()
+
+            wait("mapped workbench", focus_workbench)
+        else:
             win = wait(
                 "native window",
                 lambda: next(

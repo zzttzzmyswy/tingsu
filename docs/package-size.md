@@ -1,5 +1,14 @@
 # 单文件版的体积
 
+## v2.2.0 的桌面工作台
+
+| 平台 | 单文件字节数 | 下载大小 | 较 v2.1.0 减少 |
+| --- | ---: | ---: | ---: |
+| Linux AppImage | 20,388,344 | 20.39 MB | 7.81 MB（27.69%） |
+| Windows EXE | 21,616,757 | 21.62 MB | 10.34 MB（32.35%） |
+
+实时收音直接读取系统 PCM，X11 画面通过 XComposite 读取，Windows 的 BMP 帧由 Go 编为 JPEG，Wayland 使用 ScreenCast 门户。两个发行包均已移除 FFmpeg、ffprobe 和相关编解码库。Windows 外层 Go 程序占 21,316,608 字节，内含 Gio、界面字体和 SQLite。附加 ZIP 占 300,096 字节，其中采集和本机 CLI 启动助手的压缩数据共 205,484 字节，余下是许可与归档结构。包尾校验与长度等字段另占 53 字节。Linux 使用 SquashFS 压缩，两个平台的 MB 按十进制计算。
+
 ## v2.1.0 的 Go/Gio 工作台
 
 | 单文件 | 下载字节数 | MB（十进制） | 相对 v2.0.1 |
@@ -36,7 +45,7 @@ Windows 的 v2.0.0 为 24,673,438 B。外层 Go 程序（含 SQLite 和 PE 资�
 
 上述数字是完整发行文件的字节数。两个版本使用同一套系统网页引擎。v2 将会议服务、SQLite 和协议适配编译进 Go 后端，同时针对会议所需媒体格式重新构建 FFmpeg。Windows 首次运行会把媒体和窗口组件展开到用户缓存；缓存所占磁盘空间与单文件下载大小不同。
 
-我们用同一份 FFmpeg 9.1 源码和编解码配置比较了两种 Windows 构建。将两个静态程序及其运行库放入 ZIP 后是 20,661,204 B。改成两个小程序共用七个 FFmpeg DLL，相同 ZIP 压缩参数下是 10,859,848 B，单由共享库减少 9,801,356 B。发行包的总降幅还包括媒体组件裁剪及 Go 后端替换 Python。[Windows 媒体构建](../packaging/windows/build-media.sh) · [Linux 媒体构建](../packaging/linux/build-media.sh)
+我们用同一份 FFmpeg 9.1 源码和编解码配置比较了两种 Windows 构建。将两个静态程序及其运行库放入 ZIP 后是 20,661,204 B。改成两个小程序共用七个 FFmpeg DLL，相同 ZIP 压缩参数下是 10,859,848 B，单由共享库减少 9,801,356 B。发行包的总降幅还包括媒体组件裁剪及 Go 后端替换 Python。[Windows 媒体构建](https://github.com/zzttzzmyswy/tingsu/blob/v2.1.0/packaging/windows/build-media.sh) · [Linux 媒体构建](https://github.com/zzttzzmyswy/tingsu/blob/v2.1.0/packaging/linux/build-media.sh)
 
 
 ## v1.4.0 使用系统网页引擎

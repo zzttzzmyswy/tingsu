@@ -264,6 +264,10 @@ func (b *bridge) command(name string, a M) error {
 		if e != nil {
 			return e
 		}
+		b.screenLabel = "已共享窗口"
+		if choice != nil {
+			b.screenLabel = choice.Title
+		}
 		b.live = s
 		b.setFrameRequest()
 	case "frame_attach":
@@ -381,7 +385,11 @@ func (b *bridge) saveSettings(a M) error {
 	}
 	changed := false
 	if b.client != nil {
-		for _, k := range []string{"agent", "model", "openai_key", b.provider + "_path"} {
+		activeKeys := []string{b.provider + "_path"}
+		if b.provider == "openai" {
+			activeKeys = []string{"model", "openai_key"}
+		}
+		for _, k := range activeKeys {
 			if v, ok := values[k]; ok && !reflect.DeepEqual(v, b.settings.values[k]) {
 				changed = true
 			}

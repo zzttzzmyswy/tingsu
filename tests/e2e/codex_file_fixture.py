@@ -1,5 +1,6 @@
 """A loopback model that must call the installed Codex's filesystem tools to answer."""
 
+import base64
 import json
 import shlex
 
@@ -27,7 +28,12 @@ class WorkspaceFixture(Fixture):
                     except ValueError:
                         continue
                     if isinstance(payload, dict) and payload.get("attachments"):
-                        state.relative_path = payload["attachments"][0]["path"]
+                        info = payload["attachments"][0]
+                        state.relative_path = info["path"]
+                        if state.platform == "windows":
+                            state.encoded_path = info["path_utf8_base64"]
+                            assert base64.b64decode(state.encoded_path, validate=True).decode() == info["path"]
+                            assert info["name"] == state.filename == info["path"].rsplit("/", 1)[1]
             relative = state.relative_path
             assert relative.startswith("attachments/") and ".." not in relative.split("/")
             # The marker is deliberately absent from the user prompt and metadata.
@@ -36,7 +42,12 @@ class WorkspaceFixture(Fixture):
             tool = "exec_command"
             assert any(row.get("name") == tool for row in req["tools"])
             if state.platform == "windows":
-                command = "Get-Content -LiteralPath '" + relative.replace("'", "''") + "' -Tail 1"
+                command = (
+                    "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + state.encoded_path + "')); "
+                    "$f=Get-Item -LiteralPath $p -ErrorAction Stop; "
+                    "'filename='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.Name)); "
+                    "Get-Content -LiteralPath $f.FullName -Tail 1"
+                )
             else:
                 # Exercise an arbitrary host-installed interpreter on an actual CSV.
                 command = "python3 -c " + shlex.quote(
@@ -51,7 +62,10 @@ class WorkspaceFixture(Fixture):
                        v.get("call_id") == "call-file-" + str(state.reads)]
             result = outputs[-1]["output"] if outputs else "No tool result"
             # Return a useful failure to the driving test instead of breaking the HTTP stream.
-            answer = state.marker if state.marker in str(result) else "Native read failed: " + str(result)[:450]
+            matched = state.marker in str(result)
+            if state.platform == "windows":
+                matched = matched and "filename=" + base64.b64encode(state.filename.encode()).decode() in str(result)
+            answer = state.marker if matched else "Native read failed: " + str(result)[:700]
             state.reads += 1
             state.waiting_result = False
             item = {"type": "message", "role": "assistant", "id": "file-answer-" + str(state.reads),

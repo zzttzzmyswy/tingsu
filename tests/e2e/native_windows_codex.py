@@ -183,7 +183,7 @@ def running_desktop(app, root, env, port):
 def verify(app, codex):
     if sys.platform != "win32":
         raise RuntimeError("A native Windows runner is required")
-    with tempfile.TemporaryDirectory(prefix="tingsu-release-qa-", dir=Path.home()) as profile:
+    with tempfile.TemporaryDirectory(prefix="听序 Windows 会议 ", dir=Path.home()) as profile:
         root = Path(profile)
         home = root / "codex-profile"
         home.mkdir()
@@ -199,6 +199,7 @@ def verify(app, codex):
             model.reads, model.waiting_result = 0, False
             model.marker = secrets.token_hex(12)
             original = root / "原始会议 表格.csv"
+            model.filename = original.name
             original.write_text("item,code\n" * 30_000 + "total," + model.marker + "\n", encoding="utf-8")
             Thread(target=model.serve_forever, daemon=True).start()
             try:

@@ -13,6 +13,12 @@ from .local_cli import LocalCLI
 from .runtime import app_directory
 from .agent_tools import LOCAL_CODEX_GUIDANCE, CODEX_OUTPUT, execute
 
+_WINDOWS_PATH_GUIDANCE = """
+Windows PowerShell 命令行可能把中文等字符转换为问号。附件清单含 path_utf8_base64 时，
+请用纯 ASCII 命令在 PowerShell 内得到原文件路径：
+$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('这里替换为清单中的编码'))
+随后可用 -LiteralPath $p 读取，或把 $p 传给适合这个文件的分析工具。这个编码只代表路径。"""
+
 
 def _visible_prefix(raw):
     """Decode complete escapes from an incrementally streamed JSON message string."""
@@ -191,7 +197,7 @@ class CodexBackend:
             "cwd": self.cwd,
             "approvalPolicy": "never",
             "runtimeWorkspaceRoots": [self.cwd] if self.workspace else [],
-            "baseInstructions": LOCAL_CODEX_GUIDANCE,
+            "baseInstructions": LOCAL_CODEX_GUIDANCE + (_WINDOWS_PATH_GUIDANCE if os.name == "nt" else ""),
             "config": self.tool_config,
         }
         if self.scoped_reads:

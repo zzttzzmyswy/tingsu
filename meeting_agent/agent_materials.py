@@ -220,10 +220,16 @@ def make_inputs(provider, text, attachments, context, *, frame=None, workspace=N
     text_type = "input_text" if responses else "text"
     request = {"request": text, "meeting_context": context}
     if attachments:
-        request["attachments"] = [
-            {**m.info(), **({"path": m.path.relative_to(workspace).as_posix()} if workspace else {})}
-            for m in attachments
-        ]
+        manifest = []
+        for material in attachments:
+            info = material.info()
+            if workspace:
+                relative = material.path.relative_to(workspace).as_posix()
+                info["path"] = relative
+                if provider == "codex" and os.name == "nt" and not relative.isascii():
+                    info["path_utf8_base64"] = base64.b64encode(relative.encode("utf-8")).decode("ascii")
+            manifest.append(info)
+        request["attachments"] = manifest
     inputs = [{"type": text_type, "text": json.dumps(request, ensure_ascii=False)}]
     # Larger files remain available in full through the file tools. Bound only the
     # in-memory/native request, shared across all file and image blocks.

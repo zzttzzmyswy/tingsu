@@ -39,6 +39,7 @@ PROVIDERS = {
         "使用本机安装的 Codex CLI 和登录身份。可在 AI 设置中指定 codex 的路径。",
         lambda key, model, path, effort, speed, workspace: CodexBackend(model, path, effort, speed, workspace=workspace),
         cli="codex",
+        input_format="codex",
     ),
     "openai": Provider(
         "OpenAI",

@@ -135,7 +135,13 @@ func (u *workbench) formContent() []W {
 			if !strings.Contains(strings.ToLower(o.label), strings.ToLower(u.edit("choice-search").Text())) {
 				continue
 			}
-			action(o.id, o.label, u.fields[u.choiceKey] == o.id, func() { u.fields[u.choiceKey] = o.id; u.open(u.parentModal) })
+			action(o.id, o.label, u.fields[u.choiceKey] == o.id, func() {
+				u.fields[u.choiceKey] = o.id
+				if u.choiceKey == "topic_id" && o.id != "" {
+					u.edit("form/topic_name").SetText("")
+				}
+				u.open(u.parentModal)
+			})
 		}
 	case "board-filters":
 		for _, o := range append([]choice{{"", "全部类型"}}, kinds...) {
@@ -319,11 +325,15 @@ func (u *workbench) formContent() []W {
 			items := rows(u.results["items"])
 			for _, r := range items {
 				at := number(r["at"])
-				open(fmt.Sprint(r["seq"]), clockText(at)+"  "+str(r["text"]), func() { u.cmd("jump", M{"at": at}) })
+				stamp := clockText(at)
+				if !truth(r["timed"]) {
+					stamp = "未标时"
+				}
+				open(fmt.Sprint(r["seq"]), stamp+"  "+str(r["text"]), func() { u.cmd("jump", M{"at": at}) })
 			}
 			offset := int(number(u.results["offset"]))
 			if offset > 0 {
-				open("prev", "上一页", func() { u.search(max(0, offset-max(1, len(items)))) })
+				open("prev", "上一页", func() { u.search(max(0, offset-60)) })
 			}
 			if offset+len(items) < int(number(u.results["total"])) {
 				open("next", "下一页", func() { u.search(offset + len(items)) })

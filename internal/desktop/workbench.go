@@ -17,6 +17,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/font"
 	"gioui.org/font/opentype"
+	"gioui.org/gesture"
 	"gioui.org/io/key"
 	"gioui.org/io/system"
 	"gioui.org/layout"
@@ -67,6 +68,8 @@ func clockText(t float64) string {
 }
 
 type workbench struct {
+	timelineClick                       gesture.Click
+	compact                             bool
 	window                              *app.Window
 	th                                  *material.Theme
 	send                                func(packet)

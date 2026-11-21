@@ -306,12 +306,13 @@ func (s *Store) Event(mid, kind string, at, end float64, speaker, text string, f
 	return e
 }
 func (s *Store) SearchEvents(mid, needle, speaker, kind string, offset int) (int, []Row, error) {
-	w := " FROM events WHERE meeting=?"
+	w := " FROM annotated_events WHERE meeting=?"
 	a := []any{mid}
 	switch kind {
 	case "all", "":
-	case "speech":
-		w += " AND kind='speech'"
+	case "speech", "assistant", "user":
+		w += " AND kind=?"
+		a = append(a, kind)
 	case "ai":
 		w += " AND kind IN ('assistant','user','system')"
 	default:

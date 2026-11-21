@@ -2,6 +2,20 @@
 
 本页记录各版单文件应用的实测覆盖。下载对应版本的可执行文件并用同版本的 SHA-256 清单核对，放入源码树的 `dist/` 即可复用成品测试。[发行版本](https://github.com/zzttzzmyswy/tingsu/releases)
 
+## v2.1.0 原生 Go 工作台
+
+通过桌面键盘、窗口选择器及实际的发行程序新建会议、保存便签、选择播放进程并启动采集。三份会议录屏均在独立播放器内打开。测试机在本地接收应用实际上传给 ASR 的 WAV，核对它与原录屏的 PCM，并将听序抓取的两张 JPEG 分别与播放器或原片画面比较。测试数据留在测试机。
+
+| 桌面 | 同一份录屏的播放方式 | 音频相关系数 | 两次画面相关系数 |
+| --- | --- | ---: | --- |
+| Wayland | 原生 mpv，ScreenCast Portal 授权 | 0.9989 | 0.99993、0.99993 |
+| X11 | mpv，X11 点选窗口 | 0.9984 | 0.99994、0.99992 |
+| Windows 11 测试虚拟机（系统构建 26100） | VLC，选择 WASAPI 进程和 WinGDI 播放窗口 | 0.9991 | 0.95849、0.95889 |
+
+另外两份录屏分别在 X11 和 Wayland 独立播放，各通过两次画面比对。两种 Linux 桌面均通过 SRT 逐字稿导入，Windows 通过系统文件对话框导入后重开应用，核对中文发言人、内容和 123.4 秒时间戳。测试端点返回固定文字，用于确认从真实收音到转写入库的流程。表内数值只表示媒体内容匹配程度。TXT、SRT、VTT 解析及多文件导入事务另有 Go 回归测试。
+
+[Linux 播放器验收](../tests/e2e/native_player_linux.py) · [Windows 原生 GUI 验收](../tests/windows/nativeui/main_windows.go) · [Windows 采集内容核对](../tests/e2e/verify_windows_player.py) · [Windows 发布验收工作流](../.github/workflows/windows-release.yml)
+
 ## v2.0.0 Go 后端
 
 以下数字来自最终的 x86_64 单文件。两包均已解开检查 Go 构建信息、共用工作台和本机助手，排除了 Python 解释器、标准库和内嵌 Agent。Go 后端通过 `go test -race -count=1 ./...` 和 `go vet ./...`。Windows 原生环境也运行了 Go 服务测试。[Windows 验收运行](https://github.com/zzttzzmyswy/tingsu/actions/runs/44896083417)

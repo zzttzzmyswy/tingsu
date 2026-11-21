@@ -6,25 +6,25 @@
 
 ## 开始使用
 
-从下表下载与你的平台匹配的单个文件，放到任意目录启动。两个版本均包含 Go 会议后端、FFmpeg 和 ffprobe。C++ 桌面窗口使用系统网页引擎，Linux 使用 GTK 3 和 WebKitGTK，Windows 使用 WebView2 Evergreen。Codex、Claude Code 和 DeepSeek Harness 使用系统中已安装的 CLI。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
+从下表下载与你的平台匹配的单个文件，放到任意目录启动。工作台界面使用 Gio，转写队列、AI 调度和 SQLite 存储使用 Go。两个版本均随包提供音视频采集工具。Codex、Claude Code 和 DeepSeek Harness 使用系统中已安装的 CLI。发行说明与校验值随每个版本提供。[最新发行版](https://github.com/zzttzzmyswy/tingsu/releases/latest) · [SHA-256 校验清单](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/SHA256SUMS)
 
 | 平台 | 双击启动的文件 |
 | --- | --- |
 | Linux x86_64，glibc 2.35 及以上 | 下载后在文件属性中允许执行，或运行 `chmod +x Tingsu-Linux-x86_64.AppImage`。[下载 AppImage](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/Tingsu-Linux-x86_64.AppImage) |
 | Windows x64 | 双击后会自行展开运行组件，首次启动请稍候。[下载 Windows EXE](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/Tingsu-Windows-x86_64.exe) |
 
-Linux 桌面需要提供 GTK 3、JSON-GLib 和 WebKitGTK 4.1 或兼容的 4.0；Arch Linux 的引擎包为 `webkit2gtk-4.1`。Windows 缺少 WebView2 时可安装官方 Evergreen Runtime。[Arch Linux 软件包](https://archlinux.org/packages/extra/x86_64/webkit2gtk-4.1/) · [Microsoft 运行时](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+Linux 桌面需要 EGL、Wayland 或 X11 图形库。Wayland 共享窗口或屏幕时，由当前桌面的 ScreenCast 门户授权。Windows 使用系统 Direct3D 11 绘制界面。
 
 Windows 如提示运行组件被隔离，可用发行版校验清单核实下载来源，并查看对应组件的指纹及厂商复核进展。[Windows 启动与安全软件提示](docs/windows-startup.md)
 
 Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage --x11` 或 `--wayland` 明确选择。没有 FUSE 的环境可用同一文件的 `--appimage-extract-and-run` 模式。克隆本仓库后，可以运行 `./install-desktop /path/to/Tingsu-Linux-x86_64.AppImage`，将应用添加到 Linux 桌面菜单。
 
-1. 打开 **录屏资料库**，通过 **添加媒体** 导入音视频，或把文件放入应用程序旁的 `videos/` 目录。选择录屏，填写会议名称和起点。例如从 **05:00** 开始时，转写会沿用原视频的时间轴。
-2. 参加实时会议时，点 **新建会议** 选择麦克风、某个应用的播放流或系统输出。让会议软件开始播放，再点 **刷新设备**。每场会议同时采集一个音源。
-3. 在 **偏好设置 → 语音转写** 选择服务与模型。点 **开始转写** 后，应用以播放速度读取录屏或实时设备音频，把分片交给所选 ASR。默认每 12 秒提交一片，结果显示时间还取决于网络和识别服务。
-4. 点右上角 **连接 AI**，选择 Codex、OpenAI、Claude Code 或 DeepSeek Harness，再创建或选择会话。输入框支持直接提问和附加文件。Enter 发送，Shift+Enter 换行。AI 忙碌时，后续消息会排队，也可以停止当前回复。
-5. 点 **会议画面**，从录屏当前时间取帧，或通过桌面选择器共享会议窗口。可先预览再将帧附到消息，也可在 **偏好设置 → AI 助手** 中开启随消息发图。
-6. 便签右上角的加号用于新建，点击卡片可编辑或删除。**导出** 会把本场带时间戳的发言、对话、附件名称和本场便签写成 Markdown。首次启动会展示一场标有「示例会议」的虚构对话，方便先试用界面。
+1. 实时参会时先打开会议软件并让它发声。在听序点 **新建会议**，填写标题和可选的主题，在 **收音来源** 里选择该应用、麦克风或系统输出。也可以稍后从 **工作台菜单 → 音频来源** 刷新、选择来源。每场同时采集一个音源。
+2. 在 **偏好设置** 选择转写服务、模型并填写密钥。点 **开始转写** 后，听序会把采集的音频分片交给所选服务。默认每片 12 秒，首条结果还取决于服务响应时间。
+3. 打开 **工作台菜单 → 会议画面**，选择会议软件窗口并预览。测试已有录屏时，用 mpv 或 VLC 播放文件，在听序分别选择播放器的声音和窗口。听序采集当时正在播放的内容。
+4. 已有逐字稿可点 **导入逐字稿**（Ctrl+I）。每个 TXT、SRT 或 VTT 文件会生成一场可搜索的独立会议，之后可加入已有主题。字幕保留原始时间和发言人标记，无时间的文本显示“未标时”。这一步在本机完成。
+5. 点右上角的 AI 服务按钮，连接本机 CLI 或 OpenAI API，然后新建或选择会话。用 **添加附件** 发送会议材料，Ctrl+Enter 发送消息。AI 忙碌时可以继续输入、排队或停止当前回复。
+6. 用看板的 **＋ 新建** 保存问题、待办、决策和想法。可以编辑便签、更新共享便签状态，或从工作台菜单导出 Markdown。首次启动会展示一场虚构示例会议。
 
 ## 同一主题连续开会
 
@@ -40,20 +40,9 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 
 在 **偏好设置 → AI 助手** 开启自动分析，下一场连接 AI 后就会收到往期未结问题和待办的开场提醒，无需先录音或提问。每场成功提醒一次，重连会延续该场的进度。明确告诉 AI「样机已签收，请把这项待办标为完成」，或在卡片上自己更新。状态包括 **待跟进、进行中、已完成**。已完成卡片可通过状态筛选找回，也可以重新打开。
 
-## 工作台的十项改进
+## 浏览会议记录
 
-| 会议中遇到的情况 | 在工作台中可以怎样做 |
-| --- | --- |
-| 1. 要找半小时前讨论过的关键词 | 在会议动态中展开查找，搜索整场记录。命中词会高亮，可以翻页，也可以回到该条记录的上下文。 |
-| 2. 只想回顾某一位同事的发言 | 在查找栏选择发言人。可和关键词组合，范围覆盖整场会议。 |
-| 3. 正在读旧发言，会议还在继续 | 新内容到达时保留正在阅读的位置。点击「回到最新」恢复跟随。 |
-| 4. 想针对一句话向 AI 提问 | 用发言旁的引用按钮，将时间、发言人和原文追加到消息草稿，再写问题。 |
-| 5. 现场听到需要跟进的事 | 从发言直接创建便签，保留出处，保存前可以调整标题、类别和正文。 |
-| 6. 会后只想整理待办或决策 | 在看板选择便签类别；从空分类新建便签会沿用当前类别。 |
-| 7. 想让 AI 根据一张便签继续工作 | 在编辑窗口选择「保存并引用」，把当前版本加入已有草稿，检查后发送。 |
-| 8. 历史会议太多 | 在侧栏按会议名称查找，直接切换到匹配的工作台。 |
-| 9. 想知道大家各说了多久 | 打开发言时长，查看每个人已转写的累计时长和占比。占比的分母是所有人发言时长之和。 |
-| 10. 开会时希望少用鼠标 | 用 Tab 或 Shift+Tab 在对话框内导航，Ctrl+Enter 保存便签，关闭对话框后焦点回到原操作。 |
+在记录里选择 **查找** 可按关键词、发言人或记录类型搜索整场会议。点击结果或波形上的时间位置可跳到对应发言。发言旁的 **引用** 将原话放进消息草稿，**建便签** 则会带入发言人和出处。看板支持按类型筛选，主题看板还可按状态筛选。窄窗口可以在记录和看板之间切换。
 
 ## 采集和识别
 
@@ -62,7 +51,6 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 | 原生 PipeWire | 枚举输入、输出设备和活动播放流。可只录指定应用。 |
 | PulseAudio 和 PipeWire-Pulse | 支持麦克风、输出监视器、指定播放流。 |
 | ALSA | 直接读取可用采集硬件。若设备被桌面声音服务独占，可选择对应的 PipeWire 或 PulseAudio 音源。 |
-| 录屏和音频文件 | FFmpeg 解码为 16 kHz 单声道 PCM，停止后可从已采集位置继续。 |
 | Wayland 画面 | 使用 XDG ScreenCast Portal 和 PipeWire。若桌面选择器中没有腾讯会议等通过 XWayland 运行的程序，打开「会议画面 → 选择 XWayland 窗口」并选择其窗口。 |
 | X11 画面 | 使用 xwininfo 点选窗口，再用 FFmpeg 抓取该窗口。 |
 | Windows 麦克风与系统声音 | 使用 WASAPI 枚举音频设备，也可录制指定输出设备上的混音。 |
@@ -97,7 +85,7 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 
 ## 从源码运行和打包
 
-后端使用 Go，最低工具链版本见 [go.mod](go.mod)。Linux 开发机需要 C/C++、pkg-config、GTK 3、WebKitGTK、JSON-GLib、GIO Unix 和 GStreamer app/video 开发包，以及 FFmpeg、ffprobe。运行 `./tingsu` 会构建本机窗口、Wayland Portal 助手和 Go 后端并启动工作台。Windows 使用 `go build ./cmd/tingsu` 编译后端，原生助手及 FFmpeg 的目录加入 PATH，`TINGSU_DESKTOP_HOST` 指向原生窗口，`TINGSU_BUNDLE` 指向包含 ui 的目录。桌面发行包已经配置好这些路径。
+工作台和会议服务共用一个 Go 进程。工具链版本见 [go.mod](go.mod)。Linux 从源码运行时需要 C 编译器、pkg-config、Wayland、X11/XKB、EGL/GLES、GIO Unix 和 GStreamer app/video 开发包，以及 FFmpeg、ffprobe。运行 `./tingsu` 会构建 Go 工作台和 Wayland Portal 采集助手。Windows 使用 Go 编译桌面程序，由随包的 Win32 小程序访问 WASAPI 和系统窗口。构建和测试脚本可使用 Python，运行发行包无需安装 Python。
 
 Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 构建入口见 [packaging/windows](packaging/windows/)。打包产物包含各自的运行组件和第三方许可。AI 账号与 ASR 密钥由使用者在运行时配置。各发行版体积、新旧图形栈的差异与媒体组件的实测占用见[体积分析与缩减方案](docs/package-size.md)。
 
@@ -111,14 +99,13 @@ Linux 单文件的构建入口见 [packaging/linux](packaging/linux/)，Windows 
 | `~/.local/share/tingsu/studio.sqlite3` | 带时间戳的会议转写、发言人、对话、便签和关联的会话 ID |
 | `~/.local/share/tingsu/audio/` | 等待转写或重试的音频分片 |
 | `~/.local/share/tingsu/frames/` | 本机捕获的会议截图 |
-| `~/.cache/tingsu/library/` | 媒体资料库的预览图与元数据 |
 
-Linux 遵循 XDG 目录设置。Windows 使用当前用户的 `%LOCALAPPDATA%\Tingsu\`，下设 `config`、`data` 和 `cache`，沿用 Windows 用户配置文件的访问控制。导入媒体会引用原文件路径。音频由所选在线 ASR 处理，连接 AI 并发送消息或开启自动分析时，相关会议上下文会发送给所选 Agent。截图的自动发送默认关闭。
+Linux 遵循 XDG 目录设置。Windows 使用当前用户的 `%LOCALAPPDATA%\Tingsu\`，下设 `config`、`data` 和 `cache`，沿用 Windows 用户配置文件的访问控制。导入的逐字稿写入本机数据库。音频由所选在线 ASR 处理，连接 AI 并发送消息或开启自动分析时，相关会议上下文会发送给所选 Agent。截图的自动发送默认关闭。
 
 ## 验证
 
 ```sh
-go test ./...
+go test -tags novulkan ./...
 ```
 
 桌面运行时、平台采集、Agent 协议、数据存储的复用情况和优先拆分建议见[跨平台架构评估](docs/architecture.md)。

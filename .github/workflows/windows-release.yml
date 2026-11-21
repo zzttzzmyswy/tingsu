@@ -3,11 +3,6 @@ name: Native Windows release acceptance
 on:
   workflow_dispatch:
     inputs:
-      suite:
-        description: Run the full release matrix or the Go backend tests alone
-        type: choice
-        options: [all, go-source]
-        default: all
       release_tag:
         description: Candidate release tag in this repository
         required: true
@@ -112,6 +107,24 @@ jobs:
           $bin = Join-Path $media bin
           $env:PATH = "$bin;$env:PATH"
           go test ./...
+      - name: Capture a real Windows test window and check process audio when an endpoint is available
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & "$vs/Common7/Tools/Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          cl /nologo /std:c++17 /EHsc /O2 /MT tests/windows/acceptance.cpp /Fe:window-test.exe /link winmm.lib user32.lib gdi32.lib
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $helper = Join-Path $env:RUNNER_TEMP 'verified components/bin/tingsu-capture.exe'
+          ./window-test.exe $helper --window-only
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Start-Service Audiosrv -ErrorAction SilentlyContinue
+          $sources = & $helper audio-sources
+          if ($sources -match 'win-monitor') {
+            ./window-test.exe $helper --audio-only
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } else { Write-Host 'Runner has no playback endpoint for the WASAPI hardware test.' }
+
       - name: Test missing and altered capture components
         shell: pwsh
         run: python -u tests/e2e/windows_startup_error.py --app (Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe')

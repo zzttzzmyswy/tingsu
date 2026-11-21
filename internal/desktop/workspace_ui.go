@@ -93,6 +93,7 @@ func (u *workbench) back() {
 }
 func (u *workbench) workspace(g C) D {
 	wide := g.Constraints.Max.X >= g.Dp(1030)
+	u.compact = !wide
 	parts := []layout.FlexChild{}
 	if wide {
 		parts = append(parts, layout.Rigid(func(g C) D {
@@ -160,7 +161,7 @@ func (u *workbench) heading(g C) D {
 			u.cmd("start", nil)
 		}
 	}), u.button("agent", agent, false, func() { u.open("agent") }), u.button("menu", "工作台菜单", false, func() { u.open("menu") })}
-	if g.Constraints.Max.X < g.Dp(800) {
+	if u.compact {
 		actions = append(actions, u.button("toggle-board", map[bool]string{true: "会议记录", false: "便签看板"}[u.page == "board"], false, func() {
 			if u.page == "board" {
 				u.page = "studio"
@@ -192,6 +193,7 @@ func (u *workbench) feed(g C) D {
 			layout.Rigid(func(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("会议记录", 19, ink, true)), layout.Rigid(row(4, u.button("search", "查找", false, u.openSearch), u.button("filter", map[bool]string{true: "全部", false: kindLabel(u.feedKind)}[u.feedKind == ""], false, func() { u.open("filters") }))))
 			}),
+			layout.Rigid(u.timeline),
 			layout.Flexed(1, func(g C) D {
 				l := u.list("feed")
 				l.ScrollToEnd = true
@@ -249,7 +251,15 @@ func (u *workbench) eventRow(g C, e M) D {
 	if known, ok := e["timed"]; ok && !truth(known) {
 		stamp = "未标时"
 	}
-	content := []W{u.text(stamp+"   "+who, 13, teal, true), style.Layout}
+	header := u.text(stamp+"   "+who, 13, teal, true)
+	if kind == "speech" {
+		tag := stamp + "   " + who
+		quote := tag + "\n" + str(e["text"])
+		header = func(g C) D {
+			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, teal, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("body").SetText(quote) }))))
+		}
+	}
+	content := []W{header, style.Layout}
 	if files := str(e["files"]); files != "" && files != "[]" {
 		content = append(content, u.text(files, 12, muted, false))
 	}
@@ -260,6 +270,11 @@ func (u *workbench) eventRow(g C, e M) D {
 		bg = rgb(0xf0f4f8)
 	}
 	return layout.Inset{Top: 3, Bottom: 3, Right: 7}.Layout(g, func(g C) D { return box(full(g), bg, 8, inset(9, col(3, content...))) })
+}
+func (u *workbench) appendDraft(quote string) {
+	ed := u.edit("message")
+	ed.SetText(strings.TrimSpace(ed.Text() + "\n" + quote))
+	u.nextFocus = ed
 }
 func (u *workbench) sendMessage() {
 	s := u.edit("message").Text()
@@ -377,7 +392,10 @@ func (u *workbench) editNote(n M) {
 	u.note = n
 	kind := str(n["kind"])
 	if kind == "" {
-		kind = "question"
+		kind = u.boardKind
+		if kind == "" {
+			kind = "question"
+		}
 	}
 	status := str(n["status"])
 	if status == "" {
@@ -400,7 +418,11 @@ func (u *workbench) dialogResult(yes bool) {
 	u.send(packet{Type: "dialog-result", ID: int(number(m["id"])), Value: yes})
 }
 func (u *workbench) saveNew(start bool) {
-	u.cmd("new", M{"title": u.val("title"), "topic_id": u.fields["topic_id"], "topic_name": u.val("topic_name"), "source": u.fields["source"], "start": start})
+	topicName := u.val("topic_name")
+	if u.fields["topic_id"] != "" {
+		topicName = ""
+	}
+	u.cmd("new", M{"title": u.val("title"), "topic_id": u.fields["topic_id"], "topic_name": topicName, "source": u.fields["source"], "start": start})
 }
 func (u *workbench) submitForm() {
 	switch u.modal {

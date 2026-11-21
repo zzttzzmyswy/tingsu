@@ -29,7 +29,7 @@ var timestamp = regexp.MustCompile(`^(?:(\d+):)?(\d{1,2}):([0-5]\d)(?:[.,](\d{1,
 var txtTime = regexp.MustCompile(`^\[?((?:\d+:)?\d{1,2}:[0-5]\d(?:[.,]\d{1,3})?)\]?(?:\s+|$)(.*)$`)
 var voice = regexp.MustCompile(`(?i)^<v(?:\.[^ >]+)?\s+([^>]+)>`)
 var markup = regexp.MustCompile(`(?i)</?(?:b|i|u|ruby|rt|v|c|lang)(?:[.\s][^>]*)?>|<\d[0-9:.]*>`)
-var speakerPrefix = regexp.MustCompile(`^([^：:\n]{1,32})[：:]\s*(.+)$`)
+var speakerPrefix = regexp.MustCompile(`(?s)^([^：:\n]{1,32})[：:]\s*(.+)$`)
 
 func seconds(s string) (float64, bool) {
 	m := timestamp.FindStringSubmatch(s)
@@ -43,6 +43,18 @@ func seconds(s string) (float64, bool) {
 	return float64(h*3600+min*60+sec) + float64(frac)/1000, m[1] == "" || min < 60
 }
 func Read(path string) (Document, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".txt", ".srt", ".vtt":
+	default:
+		return Document{}, fmt.Errorf("请选择 TXT、SRT 或 VTT 逐字稿")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return Document{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return Document{}, fmt.Errorf("请选择普通文本文件")
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Document{}, err

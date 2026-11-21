@@ -146,7 +146,7 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if *video != "" {
-		v := exec.CommandContext(ctx, *player, "--no-one-instance", "--no-qt-privacy-ask", "--no-qt-updates-notif", "--no-video-title-show", "--no-embedded-video", "--vout=wingdi", "--aout=mmdevice", "--start-time=300", *video)
+		v := exec.CommandContext(ctx, *player, "--ignore-config", "--intf=dummy", "--no-plugins-cache", "--verbose=2", "--file-logging", "--logfile="+filepath.Join(*out, "vlc.log"), "--no-one-instance", "--no-qt-privacy-ask", "--no-qt-updates-notif", "--no-video-title-show", "--no-embedded-video", "--vout=wingdi", "--aout=waveout", "--start-time=300", *video)
 		if err := v.Start(); err != nil {
 			return err
 		}
@@ -207,6 +207,15 @@ func run() error {
 		return err
 	}
 	fmt.Println("Created meeting and note through native GUI")
+	if *video != "" {
+		matches, _ := filepath.Glob(filepath.Join(profile, "Tingsu", "runtime", "*", "bin", "tingsu-capture.exe"))
+		if len(matches) > 0 {
+			for _, mode := range []string{"audio-sources", "windows"} {
+				data, _ := exec.Command(matches[0], mode).CombinedOutput()
+				fmt.Printf("%s %s\n", mode, data)
+			}
+		}
+	}
 	if *video != "" {
 		ctrl('L')
 		typeText("vlc")

@@ -42,10 +42,14 @@ class WorkspaceFixture(Fixture):
             tool = "exec_command"
             assert any(row.get("name") == tool for row in req["tools"])
             if state.platform == "windows":
+                folder = relative.rsplit("/", 1)[0]
+                assert folder.isascii()
+                utf16 = state.filename.encode("utf-16-le")
+                state.units = ",".join(str(int.from_bytes(utf16[i:i+2], "little")) for i in range(0, len(utf16), 2))
                 command = (
-                    "$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + state.encoded_path + "')); "
-                    "$f=Get-Item -LiteralPath $p -ErrorAction Stop; "
-                    "'filename='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($f.Name)); "
+                    "$f=Get-ChildItem -LiteralPath '" + folder.replace("'", "''") + "' -File | "
+                    "Where-Object {(([int[]][char[]]$_.Name) -join ',') -eq '" + state.units + "'}; "
+                    "'filename='+(([int[]][char[]]$f.Name) -join ','); "
                     "Get-Content -LiteralPath $f.FullName -Tail 1"
                 )
             else:
@@ -64,7 +68,7 @@ class WorkspaceFixture(Fixture):
             # Return a useful failure to the driving test instead of breaking the HTTP stream.
             matched = state.marker in str(result)
             if state.platform == "windows":
-                matched = matched and "filename=" + base64.b64encode(state.filename.encode()).decode() in str(result)
+                matched = matched and "filename=" + state.units in str(result)
             answer = state.marker if matched else "Native read failed: " + str(result)[:700]
             state.reads += 1
             state.waiting_result = False

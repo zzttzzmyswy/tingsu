@@ -53,13 +53,45 @@ def choose_attachment(path, title="添加会议材料"):
 
 
 @contextmanager
+def debugger(port):
+    import ctypes
+    import winreg
+    flags = f"--remote-debugging-port={port} --remote-debugging-address=127.0.0.1 --disable-gpu"
+    # Elevated hosts (including the Actions runner) ignore WebView2 environment overrides
+    # since Runtime 150. Set only our test host's machine policy, then restore it.
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        yield flags
+        return
+    path = r"SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+    name = "tingsu-webview.exe"
+    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, path, access=winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+        try:
+            previous = winreg.QueryValueEx(key, name)
+        except FileNotFoundError:
+            previous = None
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, flags)
+        try:
+            yield flags
+        finally:
+            if previous:
+                winreg.SetValueEx(key, name, 0, previous[1], previous[0])
+            else:
+                winreg.DeleteValue(key, name)
+
+
+@contextmanager
 def desktop(app, root, env):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    proc = subprocess.Popen([str(app)], env={**env, "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS":
-                            f"--remote-debugging-port={port} --remote-debugging-address=127.0.0.1 --disable-gpu"},
-                            cwd=root)
+    with debugger(port) as flags:
+        with running_desktop(app, root, {**env, "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": flags}, port) as page:
+            yield page
+
+
+@contextmanager
+def running_desktop(app, root, env, port):
+    proc = subprocess.Popen([str(app)], env=env, cwd=root)
     page = None
     try:
         page = Page(port, timeout=120)
@@ -79,8 +111,12 @@ def desktop(app, root, env):
             Select-Object Name,Id,MainWindowTitle,Path | Format-Table -AutoSize | Out-String -Width 240
         Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -EA SilentlyContinue |
             Select-Object FullName,Length
+        Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
+            Where-Object { $_.CommandLine -notmatch '--type=' } | Select-Object -ExpandProperty CommandLine
+        Get-NetTCPConnection -LocalPort $env:QA_WEBVIEW_PORT -EA SilentlyContinue | Format-Table -AutoSize
         """
-        subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", diagnostics], timeout=20)
+        subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", diagnostics], timeout=25,
+                       env={**env, "QA_WEBVIEW_PORT": str(port)})
         raise
     finally:
         if page:

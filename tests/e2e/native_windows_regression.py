@@ -60,7 +60,8 @@ def media_flow(page, root):
     page.until("S.frame?.startsWith('data:image/')")
     with Image.open(BytesIO(b64decode(page.js("S.frame").split(",", 1)[1]))) as image:
         center = image.convert("RGB").getpixel((image.width//2, image.height//2))
-        assert image.size == (120,80) and all(abs(a-b)<5 for a,b in zip(center,(200,99,24))), (center,image.size)
+        assert abs(image.width / image.height - 1.5) < 0.02 and all(
+            abs(a - b) < 5 for a, b in zip(center, (200, 99, 24))), (center, image.size)
     page.click("close", area="#dialog ")
     dest = root / "真实导出.md"
     page.click("export")

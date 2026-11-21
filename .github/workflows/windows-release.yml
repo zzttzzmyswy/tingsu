@@ -93,6 +93,30 @@ jobs:
           $exe = Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe'
           if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $env:EXPECTED_SHA256) { throw 'Transferred executable checksum mismatch' }
 
+      - name: Check the system WebView2 runtime and install it when missing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-WebViewVersion {
+            $client = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            foreach ($key in @("HKLM:\SOFTWARE\WOW6432Node\$client", "HKCU:\Software\$client")) {
+              $pv = Get-ItemPropertyValue -LiteralPath $key -Name pv -ErrorAction SilentlyContinue
+              if ($pv -and [version]$pv -gt [version]'0.0.0.0') { return $pv }
+            }
+          }
+          $version = Get-WebViewVersion
+          if (-not $version) {
+            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            curl.exe --fail --silent --show-error --location --retry 3 --output $installer 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
+            if ($LASTEXITCODE -ne 0) { throw 'WebView2 download failed' }
+            $signature = Get-AuthenticodeSignature -FilePath $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation,') { throw 'Unexpected WebView2 installer signature' }
+            $setup = Start-Process $installer -ArgumentList '/silent','/install' -Wait -PassThru
+            $version = Get-WebViewVersion
+            if (-not $version) { throw "WebView2 is missing after setup (exit $($setup.ExitCode))" }
+          }
+          Write-Host "System WebView2 version $version"
+
       - name: Install the official external Codex CLI for this test
         shell: pwsh
         run: |

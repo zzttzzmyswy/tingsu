@@ -94,7 +94,12 @@ class CodexBackend:
                 "mcp_servers": {name: {"enabled": False} for name in (config.get("mcp_servers") or {})}
             }
             if self.workspace and os.name == "nt":
-                self.scoped_reads = (config.get("windows") or {}).get("sandbox") == "elevated"
+                windows = config.get("windows") or {}
+                self.scoped_reads = windows.get("sandbox") in ("elevated", "mxc")
+                if not windows.get("sandbox"):
+                    # Without an OS sandbox the CLI refuses even Get-Content under
+                    # approvalPolicy=never. Use its non-admin restricted token.
+                    self.tool_config["windows"] = {**windows, "sandbox": "unelevated"}
             if self.scoped_reads:
                 self.tool_config.update(default_permissions="tingsu_files", permissions={
                     "tingsu_files": {

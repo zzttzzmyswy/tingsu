@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from threading import Thread
+from urllib.request import urlopen
 
 from desktop import Page
 from codex_file_fixture import WorkspaceFixture
@@ -64,6 +65,23 @@ def desktop(app, root, env):
         page = Page(port, timeout=120)
         page.until("S?.meeting?.id")
         yield page
+    except Exception:
+        # Surface host/runtime failures even when the inspector never gets a page.
+        print("Windows GUI exit status:", proc.poll(), flush=True)
+        for path in ("json/version", "json/list"):
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/{path}", timeout=2) as response:
+                    print(path, response.read(4096).decode(errors="replace"), flush=True)
+            except OSError as exc:
+                print(path, str(exc), flush=True)
+        diagnostics = """
+        Get-Process -ErrorAction SilentlyContinue -Name tingsu-webview,Tingsu-Windows-x86_64,msedgewebview2 |
+            Select-Object Name,Id,MainWindowTitle,Path | Format-Table -AutoSize | Out-String -Width 240
+        Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application/*/msedgewebview2.exe" -EA SilentlyContinue |
+            Select-Object FullName,Length
+        """
+        subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", diagnostics], timeout=20)
+        raise
     finally:
         if page:
             page.close()

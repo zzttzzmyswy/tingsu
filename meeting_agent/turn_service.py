@@ -1,6 +1,7 @@
 """Schedule meeting agent turns on a serial owner thread, independently of any GUI."""
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
 
@@ -34,6 +35,7 @@ class TurnService:
         self._meeting = None
         self._active = None
         self._users = deque()
+        self._copies = ThreadPoolExecutor(max_workers=1, thread_name_prefix="meeting-files")
         self._auto_pending = False
         self._check_followups = False
         self._followups = ()
@@ -66,6 +68,10 @@ class TurnService:
         if self._text:
             self._text = ""
             self.stream("")
+
+    def close(self):
+        self.detach()
+        self._copies.shutdown(wait=False)
 
     def cancel(self):
         self._auto_pending = False
@@ -105,7 +111,8 @@ class TurnService:
         text = text or "请阅读这些会议材料。"
         at = self.position()
         self.store.event(self._meeting, "user", at, at, "我", text, files)
-        self._users.append((text, files))
+        copies = self._copies.submit(self._client.stage_files, files, self._meeting) if files else None
+        self._users.append((text, copies))
         if self.sending:
             self.changed()
         else:
@@ -117,11 +124,11 @@ class TurnService:
         self._followups = ()
         items = []
         if self._users:
-            prompt, attachments = self._users.popleft()
+            prompt, copies = self._users.popleft()
         else:
             items = self.store.pending_topic_followups(self._meeting) if self._check_followups else []
             self._check_followups = False
-            attachments = ()
+            copies = None
             if items:
                 self._followups = tuple((item["id"], item["version"]) for item in items)
                 prompt = FOLLOWUP_PROMPT
@@ -166,7 +173,8 @@ class TurnService:
                 frame = get_frame() if get_frame and not token.is_set() else None
                 if token.is_set():
                     raise AgentCancelled("已停止请求")
-                reply = client.send(prompt, attachments=list(attachments), frame=frame, material_scope=mid,
+                attachments = copies.result() if copies else []
+                reply = client.send(prompt, attachments=attachments, frame=frame, material_scope=mid,
                                     on_delta=delta, tool_handler=tool, context=json.dumps(context, ensure_ascii=False),
                                     cancel_event=token)
             except Exception as exc:

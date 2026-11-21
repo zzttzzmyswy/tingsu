@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import time
 
-from desktop import Page, native_file
+from desktop import debug_environment, Page, native_file
 
 
 def verify(app, recording, offset, seconds, min_speakers):
@@ -29,7 +29,7 @@ def verify(app, recording, offset, seconds, min_speakers):
             path = base / var
             path.mkdir(mode=0o700)
             env[var] = str(path)
-        env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+        env.update(debug_environment(port))
         with subprocess.Popen([str(app), "--x11"], cwd=base, env=env) as proc:
             try:
                 p = Page(port)

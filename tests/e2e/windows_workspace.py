@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 
-from desktop import Page
+from desktop import debug_environment, Page
 from queued_turns import SlowModel, check as check_turns
 from windows_desktop import close_app, windows_path
 from workspace_tools import check as check_workspace, seed
@@ -48,7 +48,7 @@ def run(app):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+        env.update(debug_environment(port))
         proc = subprocess.Popen(["wine", windows_path(app)], cwd=directory, env=env)
         stack.callback(lambda: proc.kill() if proc.poll() is None else None)
         page = Page(port, timeout=120)

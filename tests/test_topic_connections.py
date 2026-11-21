@@ -5,16 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from PySide6.QtCore import QCoreApplication
-
 from meeting_agent.bridge import Bridge
 
 
 class TopicConnections(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QCoreApplication.instance() or QCoreApplication([])
-
     def setUp(self):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -22,7 +16,10 @@ class TopicConnections(unittest.TestCase):
             setting = patch("meeting_agent.storage." + key, Path(folder.name) / key)
             setting.start()
             self.addCleanup(setting.stop)
-        self.bridge = Bridge(None)
+        local_data = patch("meeting_agent.bridge.DATA", Path(folder.name) / "DATA")
+        local_data.start()
+        self.addCleanup(local_data.stop)
+        self.bridge = Bridge(Mock())
         self.addCleanup(self.bridge.store.db.close)
         self.addCleanup(self.bridge.shutdown)
         self.client = Mock()

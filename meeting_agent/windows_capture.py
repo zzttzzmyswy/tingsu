@@ -11,10 +11,6 @@ from pathlib import Path
 from threading import Event
 from typing import Callable
 
-from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QApplication, QInputDialog
-
 
 def _helper() -> str:
     internal = Path(__file__).resolve().parent / "native" / "tingsu-capture.exe"
@@ -60,21 +56,25 @@ def audio_command(source) -> list[str]:
     return [_helper(), "audio", source.kind, source.id]
 
 
-def choose_window() -> str:
-    """Select a Windows top-level window on the Qt GUI thread."""
-    choices = {}
+def list_windows() -> list[dict]:
+    choices = []
     for row in _rows("windows"):
         hwnd, pid, _ = row["id"].split("/")
         if pid != str(os.getpid()):
-            choices[f'{row["label"]}  [{hwnd}]'] = row["id"]
-    if not choices:
-        raise ValueError("没有可共享的可见窗口。请先打开并还原会议窗口。")
-    label, ok = QInputDialog.getItem(
-        QApplication.activeWindow(), "选择会议窗口", "要共享的窗口", list(choices), 0, False
+            choices.append({"id": row["id"], "title": row["label"], "app": hwnd})
+    return choices
+
+
+def _jpeg(bitmap: bytes) -> bytes:
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "image2pipe", "-c:v", "bmp", "-i", "pipe:0",
+         "-frames:v", "1", "-filter_threads", "1", "-vf", "scale='min(1920,iw)':-1", "-threads", "1",
+         "-c:v", "mjpeg", "-q:v", "3", "-f", "image2pipe", "pipe:1"],
+        input=bitmap, capture_output=True, timeout=10, creationflags=_flags(),
     )
-    if not ok or label not in choices:
-        raise ValueError("已取消窗口选择。")
-    return choices[label]
+    if result.returncode or not result.stdout:
+        raise RuntimeError("所选窗口没有可读取的画面。")
+    return result.stdout
 
 
 def _grab(token: str, stop: Event) -> bytes | None:
@@ -98,16 +98,7 @@ def _grab(token: str, stop: Event) -> bytes | None:
                     raise RuntimeError(
                         "Windows 窗口取帧失败。" + errors.decode(errors="replace")[-400:]
                     )
-                image = QImage.fromData(bitmap, "BMP")
-                if image.isNull():
-                    raise RuntimeError("所选窗口没有可读取的画面。")
-                if image.width() > 1920:
-                    image = image.scaledToWidth(1920, Qt.TransformationMode.SmoothTransformation)
-                encoded = QBuffer()
-                encoded.open(QIODevice.OpenModeFlag.WriteOnly)
-                if not image.save(encoded, "JPEG", 88):
-                    raise RuntimeError("无法编码当前窗口截图。")
-                return bytes(encoded.data())
+                return _jpeg(bitmap)
         finally:
             if proc.poll() is None:
                 proc.kill()

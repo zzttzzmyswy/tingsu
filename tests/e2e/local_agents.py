@@ -9,7 +9,7 @@ import socket
 import subprocess
 import tempfile
 
-from desktop import Page, native_file
+from desktop import debug_environment, Page, native_file
 
 
 def verify_flow(provider, executable, material, launch, close_app, choose_file):
@@ -74,7 +74,7 @@ def verify(app, provider, executable, directory, deepseek_fixture=False, *, wine
     process_ports = {}
     prior_ports = set()
     material = directory / "agenda.txt"
-    material.write_text("合成会议记录。" * 30_000 + "本次验收材料的编号是 ORCHID-718。", encoding="utf-8")
+    material.write_text("合成会议记录。\n" * 30_000 + "本次验收材料的编号是 ORCHID-718。", encoding="utf-8")
 
     with ExitStack() as cleanup:
         if wine:
@@ -109,7 +109,7 @@ def verify(app, provider, executable, directory, deepseek_fixture=False, *, wine
                 if port not in prior_ports:
                     break
             prior_ports.add(port)
-            env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+            env.update(debug_environment(port))
             command = ["wine", native_path(app)] if wine else [str(app), "--x11"]
             proc = subprocess.Popen(command, cwd=directory, env=env,
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -232,6 +232,11 @@ class Store:
     def meeting(self, mid):
         return self.one(self._MEETINGS + "WHERE m.id=?", (mid,))
 
+    def workspace_meetings(self, mid):
+        return [row["id"] for row in self.rows(
+            "SELECT id FROM meetings WHERE id=? OR topic_id=(SELECT nullif(topic_id,'') FROM meetings WHERE id=?)",
+            (mid, mid))]
+
     def topics(self):
         return self.rows("SELECT t.id,t.name,count(m.id) AS meeting_count FROM topics t "
                          "LEFT JOIN meetings m ON m.topic_id=t.id GROUP BY t.id "

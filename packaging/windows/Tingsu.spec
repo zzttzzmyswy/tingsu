@@ -4,7 +4,6 @@ import sys
 from importlib.metadata import distribution
 from pathlib import Path
 
-from PyInstaller.utils.hooks import get_package_paths
 
 here = Path(SPECPATH)
 root = here.parent.parent
@@ -18,18 +17,21 @@ if not helper.is_file():
 # as data to preserve the original signatures and their native directory layout.
 assets = [(str(root / "meeting_agent" / "ui"), "meeting_agent/ui"),
           (str(root / "LICENSE"), "licenses/tingsu"),
+          (str(here / "licenses"), "licenses/webview"),
           (str(root / "THIRD_PARTY.md"), "licenses/tingsu"),
           (str(root / "packaging" / "sources"), "licenses/tingsu/packaging/sources"),
           (str(Path(sys.base_prefix) / "LICENSE.txt"), "licenses/python")]
 native_tools = [("bin/tingsu-capture.exe", str(helper), "DATA"),
-                ("bin/tingsu-host.exe", str(helper.with_name("tingsu-host.exe")), "DATA")]
+                ("bin/tingsu-host.exe", str(helper.with_name("tingsu-host.exe")), "DATA"),
+                ("bin/tingsu-webview.exe", str(helper.with_name("tingsu-webview.exe")), "DATA"),
+                ("bin/WebView2Loader.dll", str(helper.with_name("WebView2Loader.dll")), "DATA")]
 for asset in ("bin/ffmpeg.exe", "bin/ffprobe.exe", "licenses/ffmpeg/LICENSE"):
     path = vendor / asset
     if not path.is_file():
         raise SystemExit(f"Missing FFmpeg distribution file: {path}")
     native_tools.append((asset, str(path), "DATA"))
 
-for pkg in ("PySide6", "PySide6-Essentials", "PySide6-Addons", "shiboken6", "PyInstaller",
+for pkg in ("PyInstaller",
             "certifi", "charset-normalizer", "idna", "urllib3", "requests", "pypdf",
             "httpcore", "httpx", "h11", "anyio", "typing-extensions"):
     dist = distribution(pkg)
@@ -47,19 +49,8 @@ analysis = Analysis(
     pathex=[str(root)],
     datas=assets,
     hiddenimports=["pypdf"],
-    excludes=["tkinter", "gi"],
+    excludes=["tkinter", "gi", "PySide6", "shiboken6"],
 )
-
-# Qt and QtWebEngineProcess both load the MSVC runtime on a clean Windows
-# installation. Ship the runtime supplied by the official Qt wheel app-locally.
-qt_dir = Path(get_package_paths("PySide6")[1])
-runtime_prefixes = ("msvcp140", "vcruntime140", "concrt140")
-runtimes = sorted(p for p in qt_dir.glob("*.dll") if p.name.lower().startswith(runtime_prefixes))
-if not any(p.name.lower() == "msvcp140.dll" for p in runtimes):
-    raise SystemExit("The selected Qt wheel does not supply the application-local MSVC runtime")
-crt_names = {p.name.lower() for p in runtimes}
-analysis.binaries = [entry for entry in analysis.binaries if entry[0].lower() not in crt_names]
-analysis.binaries.extend((p.name, str(p), "BINARY") for p in runtimes)
 
 pyz = PYZ(analysis.pure)
 exe = EXE(

@@ -56,11 +56,13 @@ class Fixture(BaseHTTPRequestHandler):
         request = json.loads(data)
         self.server.requests.append(request)
         names = {t["name"] for t in request.get("tools", [])}
-        # Claude's streaming transport may add this inert deferred-tool marker.
-        if self.server.tool_prefix == "mcp__meeting__":
+        claude = self.server.tool_prefix == "mcp__meeting__"
+        native = {"Read", "Glob", "Grep"} if claude else {
+            "read", "read_image", "glob", "grep", "skill", "office_render", "office_convert", "office_recalculate"}
+        if claude:
             names.discard("DeferredToolPlaceholder")
-        if any(not name.startswith(self.server.tool_prefix) for name in names):
-            return self.send_error(422, "Unexpected non-meeting tool")
+        if any(not name.startswith(self.server.tool_prefix) and name not in native for name in names):
+            return self.send_error(422, "Unexpected tool")
         # The native Claude CLI can append a system reminder after the actual user turn.
         msgs = [m for m in request.get("messages", []) if m.get("role") in {"assistant", "user"}]
         if not msgs:
@@ -73,21 +75,32 @@ class Fixture(BaseHTTPRequestHandler):
         content = msgs[-1].get("content", [])
         results = {block.get("tool_use_id") for block in content if isinstance(block, dict)
                    and block.get("type") == "tool_result"}
-        file_id = re.search(r'"attachments"\s*:\s*\[\s*\{\s*"id"\s*:\s*"([a-f0-9]{64})"', last.replace('\\"', '"'))
+        strings = [content] if isinstance(content, str) else [
+            block["text"] for block in content if isinstance(block, dict) and block.get("type") == "text"]
+        file_path = re.search(r'"path"\s*:\s*("(?:\\.|[^"\\])*")', "\n".join(strings))
         tool = None
-        if results:
+        native_call = False
+        if getattr(self.server, "file_tool", None):
+            tool, native_call = self.server.file_tool(content, names), True
+        elif results:
             # Claude can group both calls in one assistant message and both results in one user message.
             if ("tool_list_topic_meetings" in results and "tool_read_topic_history" not in results
                     and "prior-topic-session" in last):
                 tool = ("read_topic_history", {"meeting_id": "prior-topic-session", "kind": "transcript",
                                                "query": "预算", "offset": 0, "limit": 10})
-            elif "tool_read_attachment" in results and "tool_read_transcript" not in results and "ORCHID-718" in last:
+            elif ("tool_Grep" in results or "tool_grep" in results) and "ORCHID-718" in last:
                 tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
             elif ("tool_read_transcript" in results and "tool_create_note" not in results
                     and "ORCHID" in json.dumps(msgs, ensure_ascii=False)):
                 tool = ("create_note", {"kind": "task", "title": "验收行动项", "body": "ORCHID-718"})
-        elif file_id:
-            tool = ("read_attachment", {"id": file_id[1], "format": "text", "query": "ORCHID", "offset": 0, "limit": 500})
+        elif file_path:
+            name = "Grep" if claude else "grep"
+            if name not in names:
+                return self.send_error(422, "Workspace search unavailable")
+            args = {"path": json.loads(file_path[1]), "pattern": "ORCHID"}
+            if claude:
+                args["output_mode"] = "content"
+            tool, native_call = (name, args), True
         elif "ORCHID" in last:
             tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
         elif "tingsu-recall-topic" in last:
@@ -98,7 +111,7 @@ class Fixture(BaseHTTPRequestHandler):
                   "model": MODEL, "content": [], "usage": {"input_tokens": 12, "output_tokens": 0}}}]
         if tool:
             name, args = tool
-            block = {"type": "tool_use", "id": f"tool_{name}", "name": self.server.tool_prefix + name, "input": {}}
+            block = {"type": "tool_use", "id": f"tool_{name}", "name": name if native_call else self.server.tool_prefix + name, "input": {}}
             delta = {"type": "input_json_delta", "partial_json": json.dumps(args, ensure_ascii=False)}
         else:
             block = {"type": "text", "text": ""}

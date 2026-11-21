@@ -1,0 +1,8 @@
+#!/bin/sh
+# WebKit launches desktop-installed renderers and graphics drivers. Restore their host libraries.
+set -eu
+binary="$(dirname "$0")/tingsu-webview-bin"
+for name in ${TINGSU_HOST_VARIABLES:-}; do
+    if original=$(printenv "TINGSU_HOST_$name"); then export "$name=$original"; else unset "$name"; fi
+done
+exec "$binary" "$@"

@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -30,44 +31,63 @@ def wait(fn, label, timeout=35):
     raise TimeoutError(label)
 
 
+def debug_environment(port):
+    address = f"127.0.0.1:{port}"
+    return {"WEBKIT_INSPECTOR_HTTP_SERVER": address,
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": f"--remote-debugging-port={port} --disable-gpu",
+            "QTWEBENGINE_REMOTE_DEBUGGING": address}  # Historical versions in upgrade tests.
+
+
 class Page:
     def __init__(self, port, timeout=90):
         def attach():
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=1) as response:
-                pages = json.load(response)
-            return next(
-                (
-                    x["webSocketDebuggerUrl"]
-                    for x in pages
-                    if x.get("type") == "page" and x.get("url", "").endswith("/index.html")
-                ),
-                None,
-            )
+            base = f"http://127.0.0.1:{port}"
+            try:
+                with urllib.request.urlopen(base + "/json/list", timeout=1) as response:
+                    pages = json.load(response)
+                return next(((x["webSocketDebuggerUrl"], False) for x in pages
+                             if x.get("type") == "page" and x.get("url", "").endswith("/index.html")), None)
+            except (OSError, ValueError):
+                with urllib.request.urlopen(base, timeout=1) as response:
+                    targets = response.read().decode()
+                for row in targets.split("</tr>"):
+                    match = re.search(r"(/socket/\d+/\d+/WebPage)", row)
+                    if match and "/index.html" in row:
+                        return f"ws://127.0.0.1:{port}" + match[1], True
 
-        url = wait(attach, "QtWebEngine page", timeout)
+        url, webkit = wait(attach, "desktop webview inspector", timeout)
         # A host port forward can differ from the debugger address inside a test VM.
         url = f"ws://127.0.0.1:{port}/" + url.split("/", 3)[-1]
         self.ws = websocket.create_connection(url, suppress_origin=True, timeout=10)
         self.seq = 0
+        self.target = None
+        if webkit:
+            while not self.target:
+                msg = json.loads(self.ws.recv())
+                if msg.get("method") == "Target.targetCreated":
+                    self.target = msg["params"]["targetInfo"]["targetId"]
         self.until("document.getElementById('title')?.textContent", timeout)
 
     def js(self, code):
         self.seq += 1
-        self.ws.send(
-            json.dumps(
-                {
-                    "id": self.seq,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": code, "returnByValue": True},
-                }
-            )
-        )
+        packet = {"id": self.seq, "method": "Runtime.evaluate",
+                  "params": {"expression": code, "returnByValue": True}}
+        if self.target:
+            packet = {"id": self.seq, "method": "Target.sendMessageToTarget",
+                      "params": {"targetId": self.target, "message": json.dumps(packet)}}
+        self.ws.send(json.dumps(packet))
         while True:
             msg = json.loads(self.ws.recv())
+            if self.target:
+                if msg.get("method") != "Target.dispatchMessageFromTarget":
+                    continue
+                msg = json.loads(msg["params"]["message"])
             if msg.get("id") == self.seq:
                 result = msg.get("result", {})
                 if "exceptionDetails" in result:
                     raise RuntimeError(result["exceptionDetails"].get("text", "JS exception"))
+                if result.get("wasThrown") or "error" in msg:
+                    raise RuntimeError(result.get("result", {}).get("description") or str(msg.get("error")))
                 return result.get("result", {}).get("value")
 
     def until(self, code, timeout=35):
@@ -219,7 +239,7 @@ def main():
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+        env.update(debug_environment(port))
         log = cleanup.enter_context((base / "gui.log").open("w"))
 
         def launch():

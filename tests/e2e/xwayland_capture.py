@@ -18,7 +18,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from PIL import Image
-from desktop import Page, wait
+from desktop import debug_environment, Page, wait
 from wayland_window import SIZE, TITLE
 
 
@@ -67,7 +67,7 @@ def verify(app, folder, wemeet):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
-        process = start("app", [app, "--wayland"], {"QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}"})
+        process = start("app", [app, "--wayland"], debug_environment(port))
         page = Page(port)
         cleanup.callback(page.close)
         data = Path(env["XDG_DATA_HOME"]) / "tingsu" / "frames"

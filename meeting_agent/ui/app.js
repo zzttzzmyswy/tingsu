@@ -19,7 +19,6 @@ const avatars = [
   ["#def0ea", "#427568"],
 ];
 let S,
-  B,
   view = "workspace",
   filter = "all",
   modal = "",
@@ -30,7 +29,11 @@ let S,
   drafts = {};
 let requestedMedia = "",
   modalState = "";
-const cmd = (name, data = {}) => B?.command(name, JSON.stringify(data));
+function postDesktop(packet) {
+  if (window.chrome?.webview) window.chrome.webview.postMessage(packet);
+  else window.webkit.messageHandlers.tingsu.postMessage(JSON.stringify(packet));
+}
+const cmd = (name, args = {}) => postDesktop({type: "command", name, args});
 const duration = (n = 0, long = false) => {
   n = Math.max(0, Math.floor(n));
   const h = Math.floor(n / 3600),
@@ -628,8 +631,10 @@ function agentDialog() {
       (S.meeting.topic_id ? ' 已连接到主题「' + esc(S.meeting.topic_name) + '」的共享会话。' :
         ' 已连接到本场会议。') + '</p><p class="session-id">' +
       esc(S.session) +
-      '</p><div class="dialog-actions">' +
+      '</p>' + (S.agentWorkspace ? '<p class="hint">本机工作目录</p><p class="session-id">' +
+        esc(S.agentWorkspace) + '</p>' : '') + '<div class="dialog-actions">' +
       btn("disconnect", "断开连接", "plug", "secondary left") +
+      (S.agentWorkspace ? btn("open-agent-workspace", "打开工作目录") : "") +
       btn("close", "完成", "check", "primary") +
       "</div>";
   } else if (status === "login") {
@@ -713,12 +718,12 @@ function screenDialog() {
   dlg("screen", "会议画面", '<div id="screen-body"></div>', true, false);
   updateScreen();
 }
-function chooseXwayland(windows) {
+function chooseCaptureWindow(windows) {
   const options = windows.map(w => '<button class="session-row" data-action="screen-xwindow" data-id="' +
     esc(w.id) + '">' + icon("screen", 16) + '<span>' + esc(w.title) + '</span><small>' + esc(w.app) +
     '</small></button>').join("");
-  dlg("xwindows", "选择 XWayland 窗口", (options ? '<div class="session-list">' + options + '</div>' :
-    '<p class="hint">没有可见的 XWayland 应用窗口。打开会议窗口后刷新，或返回使用桌面选择器。</p>') +
+  dlg("xwindows", S.windowsDesktop ? "选择会议窗口" : "选择 XWayland 窗口", (options ? '<div class="session-list">' + options + '</div>' :
+    '<p class="hint">没有可选的应用窗口。打开会议窗口后刷新列表。</p>') +
     '<div class="dialog-actions">' + btn("screen", "返回") + btn("screen-xwindows", "刷新窗口", "refresh") + '</div>');
 }
 function updateScreen() {
@@ -934,6 +939,8 @@ function act(a, el) {
     }
     case "disconnect":
       return cmd("disconnect");
+    case "open-agent-workspace":
+      return cmd("open_agent_workspace");
     case "session-new":
       return cmd("session", {});
     case "session-replace":
@@ -1044,17 +1051,14 @@ document.addEventListener("keydown", (e) => {
 $("#feed-scroll").addEventListener("scroll", syncLatestButton, {passive: true});
 new ResizeObserver(syncLatestButton).observe($("#feed-scroll"));
 icons();
-new QWebChannel(qt.webChannelTransport, (channel) => {
-  B = channel.objects.studio;
-  B.state.connect(onState);
-  B.notice.connect((text, kind) => {
+function onNotice(text, kind) {
     if (kind === "error" && modal === "new")
       for (const button of $("#dialog").querySelectorAll('[data-action^="create"]')) button.disabled = false;
     toast(text, kind);
-  });
-  B.event.connect((name, value) => {
+}
+function onDesktopEvent(name, value) {
     if (name === "screen-windows" && (modal === "screen" || modal === "xwindows"))
-      chooseXwayland(JSON.parse(value));
+      chooseCaptureWindow(JSON.parse(value));
     if (name === "search-results") receiveMatches(value);
     if (name === "jump") jumpTo(Number(value));
     if (name === "settings-saved" && modal === "settings") close();
@@ -1078,6 +1082,12 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
       $("#message").value = "";
       drafts[previous] = "";
     }
-  });
-  B.ready();
-});
+}
+window.tingsuReceive = packet => {
+  if (packet.type !== "signal" || !Array.isArray(packet.args)) return;
+  if (packet.name === "state") onState(...packet.args);
+  else if (packet.name === "notice") onNotice(...packet.args);
+  else if (packet.name === "event") onDesktopEvent(...packet.args);
+};
+window.chrome?.webview?.addEventListener("message", e => window.tingsuReceive(e.data));
+postDesktop({type: "ready"});

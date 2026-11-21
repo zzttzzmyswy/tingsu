@@ -5,22 +5,29 @@ import concurrent.futures
 import contextlib
 import hashlib
 import threading
+import uuid
+from pathlib import Path
 
 import httpx
 
-from .agent_materials import AgentCancelled, AgentError, MATERIAL_TOOLS, MaterialLibrary, make_inputs
+from .agent_materials import AgentCancelled, AgentError, MATERIAL_TOOLS, Material, MaterialLibrary, make_inputs
 from .agent_providers import PROVIDERS
+from .agent_workspace import MeetingWorkspace
 from .runtime import app_directory
 
 
 class AgentClient:
-    def __init__(self, provider, api_key="", model="", executable="", *, effort="", speed=""):
+    def __init__(self, provider, api_key="", model="", executable="", *, effort="", speed="", workspace=None):
         if provider not in PROVIDERS:
             raise AgentError("未知的 Agent 供应商。")
         self.provider = provider
         self.session_id = None
         self._spec = PROVIDERS[provider]
-        self._backend = self._spec.create(api_key, model, executable, effort, speed)
+        self.workspace = workspace
+        if self.workspace is None and self._spec.cli:
+            self.workspace = MeetingWorkspace(app_directory("data"), uuid.uuid4().hex)
+        self._backend = self._spec.create(api_key, model, executable, effort, speed,
+                                          self.workspace.directory if self.workspace else None)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, name="tingsu-agent", daemon=True)
         self._thread.start()
@@ -98,6 +105,21 @@ class AgentClient:
         self.session_id = self._call(lambda: self._backend.open_session(session_id, title))
         return self.session_id
 
+    def _library(self, scope):
+        if self.workspace:
+            return self.workspace.library(scope or self.workspace.meeting)
+        key = hashlib.sha256(f"session:{self.provider}:{self.session_id}".encode()).hexdigest()
+        data = app_directory("data")
+        library = MaterialLibrary(data / "api-materials" / key)
+        library.import_previous(data / "materials" / key, legacy=True)
+        return library
+
+    def stage_files(self, paths, material_scope=None):
+        library = self._library(material_scope)
+        frame_dir = app_directory("data") / "frames" / (material_scope or "")
+        return [p if isinstance(p, Material) else library.add(p, shared_frame=Path(p).parent == frame_dir)
+                for p in paths]
+
     def send(
         self, text, attachments=(), on_delta=None, tool_handler=None, *, context="", cancel_event=None,
         material_scope=None, frame=None
@@ -110,12 +132,13 @@ class AgentClient:
         async def send():
             if cancel_event is not None and cancel_event.is_set():
                 raise AgentCancelled("已停止请求。")
-            scope = ("meeting:" + material_scope if material_scope else f"session:{self.provider}:{self.session_id}")
-            library = MaterialLibrary(app_directory("data") / "materials" / hashlib.sha256(scope.encode()).hexdigest())
+            library = await asyncio.to_thread(self._library, material_scope)
 
             def prepare():
-                selected = [library.add(path) for path in attachments]
-                return make_inputs(self._spec.input_format, text, selected, context, frame=frame)
+                selected = self.stage_files(attachments, material_scope)
+                local = self.workspace.directory if self._spec.cli else None
+                return make_inputs(self._spec.input_format, text, selected, context, frame=frame,
+                                   workspace=local, shared_frames=[m.path for m in selected if local and m.shared_frame])
 
             def tool(name, args):
                 if cancel_event is not None and cancel_event.is_set():

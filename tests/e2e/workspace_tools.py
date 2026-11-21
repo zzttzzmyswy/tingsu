@@ -15,7 +15,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
-from desktop import Page
+from desktop import debug_environment, Page
 
 
 TITLE = "工作台回归 · 春季复盘"
@@ -186,7 +186,7 @@ def run_app(app):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+        env.update(debug_environment(port))
         log = stack.enter_context((base / "app.log").open("w+"))
         proc = subprocess.Popen([str(app.resolve()), "--x11"], env=env, stdout=log, stderr=log)
         def close_app():

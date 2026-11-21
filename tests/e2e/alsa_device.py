@@ -22,7 +22,7 @@ import time
 import wave
 from pathlib import Path
 
-from desktop import Page, wait
+from desktop import debug_environment, Page, wait
 
 TITLE = "ALSA synthetic meeting"
 SOURCE = "alsa-mic:plughw:98,0"
@@ -148,7 +148,7 @@ def run(app, folder):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-    env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+    env.update(debug_environment(port))
     cmd = [
         "xvfb-run",
         "-a",

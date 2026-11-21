@@ -6,6 +6,7 @@ from http.server import ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import secrets
 import socket
 import subprocess
 import sys
@@ -13,7 +14,39 @@ import tempfile
 from threading import Thread
 
 from desktop import Page
-from external_codex import CodexFixture
+from codex_file_fixture import WorkspaceFixture
+
+
+def choose_attachment(path):
+    # UI Automation reaches the native file picker even on a non-interactive CI desktop.
+    script = """
+    Add-Type -AssemblyName UIAutomationClient
+    $element = [Windows.Automation.AutomationElement]
+    $scope = [Windows.Automation.TreeScope]::Descendants
+    $name = New-Object Windows.Automation.PropertyCondition($element::NameProperty, '添加会议材料')
+    $fileId = New-Object Windows.Automation.PropertyCondition($element::AutomationIdProperty, '1148')
+    $openId = New-Object Windows.Automation.PropertyCondition($element::AutomationIdProperty, '1')
+    $edit = New-Object Windows.Automation.PropertyCondition($element::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ([DateTime]::UtcNow -lt $deadline) {
+      $dialog = $element::RootElement.FindFirst($scope, $name)
+      if ($dialog) {
+        $combo = $dialog.FindFirst($scope, $fileId)
+        $open = $dialog.FindFirst($scope, $openId)
+        if ($combo -and $open) {
+          $field = $combo.FindFirst($scope, $edit)
+          if (!$field) { $field = $combo }
+          $field.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).SetValue($env:QA_ATTACHMENT)
+          $open.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+          exit 0
+        }
+      }
+      Start-Sleep -Milliseconds 200
+    }
+    throw 'Native attachment picker was unavailable'
+    """
+    subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script], check=True, timeout=45,
+                   env={**os.environ, "QA_ATTACHMENT": str(path)})
 
 
 @contextmanager
@@ -21,7 +54,8 @@ def desktop(app, root, env):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    proc = subprocess.Popen([str(app)], env={**env, "QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}"},
+    proc = subprocess.Popen([str(app)], env={**env, "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS":
+                            f"--remote-debugging-port={port} --remote-debugging-address=127.0.0.1 --disable-gpu"},
                             cwd=root)
     page = None
     try:
@@ -32,16 +66,18 @@ def desktop(app, root, env):
         if page:
             page.close()
         if proc.poll() is None:
-            # A PyInstaller one-file launcher owns a second executable process containing the Qt window.
-            # Select only the main window from the verified executable path on this disposable runner.
+            # The one-file parent starts Python, which owns the native WebView2 window process.
             close = """
-            $name = [IO.Path]::GetFileNameWithoutExtension($env:QA_APP)
-            $windows = @(Get-Process -Name $name | Where-Object { $_.Path -eq $env:QA_APP -and $_.MainWindowHandle -ne 0 })
+            $processes = @(Get-CimInstance Win32_Process)
+            $ids = @([int]$env:QA_APP_PID)
+            $ids += @($processes | Where-Object { $_.ParentProcessId -in $ids } | ForEach-Object ProcessId)
+            $native = @($processes | Where-Object { $_.ParentProcessId -in $ids -and $_.Name -eq 'tingsu-webview.exe' })
+            $windows = @($native | ForEach-Object { Get-Process -Id $_.ProcessId } | Where-Object { $_.MainWindowHandle -ne 0 })
             if ($windows.Count -ne 1 -or !$windows[0].CloseMainWindow()) { exit 1 }
             """
             try:
                 subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", close], check=True,
-                               env={**env, "QA_APP": str(app)}, timeout=20)
+                               env={**env, "QA_APP_PID": str(proc.pid)}, timeout=20)
                 assert proc.wait(timeout=35) == 0, "Desktop did not exit cleanly"
             finally:
                 if proc.poll() is None:
@@ -62,10 +98,13 @@ def verify(app, codex):
             path = root / folder
             path.mkdir()
             env[key] = str(path)
-        env.update(CODEX_HOME=str(home), HOME=env["USERPROFILE"], TINGSU_APP_DIR=str(root),
-                   QT_OPENGL="software", QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --no-first-run")
-        with ThreadingHTTPServer(("127.0.0.1", 0), CodexFixture) as model:
-            model.received = []
+        env.update(CODEX_HOME=str(home), HOME=env["USERPROFILE"], TINGSU_APP_DIR=str(root))
+        with ThreadingHTTPServer(("127.0.0.1", 0), WorkspaceFixture) as model:
+            model.platform = "windows"
+            model.reads, model.waiting_result = 0, False
+            model.marker = secrets.token_hex(12)
+            original = root / "原始会议 表格.csv"
+            original.write_text("item,code\n" * 30_000 + "total," + model.marker + "\n", encoding="utf-8")
             Thread(target=model.serve_forever, daemon=True).start()
             try:
                 base = f"http://127.0.0.1:{model.server_port}/v1"
@@ -90,10 +129,14 @@ def verify(app, codex):
                     page.until("S.agent==='ready' && !modal", 90)
                     session = page.js("S.session")
                     assert session, "Missing Codex thread ID"
-                    page.field("#message", "ORCHID-718")
+                    page.click("attach")
+                    choose_attachment(original)
+                    page.until("S.files.includes(" + json.dumps(original.name) + ")")
+                    page.field("#message", "从附件末行读取编号。")
                     page.click("send")
-                    reply = "e.kind==='assistant' && e.text==='ORCHID-718 received'"
+                    reply = "e.kind==='assistant' && e.text===" + json.dumps(model.marker)
                     page.until(f"!S.sending && S.events.some(e=>{reply})", 100)
+                original.unlink()
                 with desktop(app, root, env) as page:
                     page.until(f"S.events.some(e=>{reply})")
                     page.click("agent")
@@ -101,11 +144,11 @@ def verify(app, codex):
                     page.until("S.agent==='choose'", 90)
                     page.click("session", "继续本会议的会话")
                     page.until("S.agent==='ready' && S.session===" + json.dumps(session), 90)
-                    page.field("#message", "ORCHID-718 again")
+                    page.field("#message", "请再次打开此前发送的原文件，重新读取末行。")
                     page.click("send")
                     page.until(f"!S.sending && S.events.filter(e=>{reply}).length===2", 100)
-                assert len(model.received) == 2, model.received
-                print("PASS native Windows release, external Codex, two turns on loopback, restart and same thread")
+                assert model.reads == 2
+                print("PASS native Windows release, attachment picker, external Codex read its working directory twice, restart and same thread")
             finally:
                 model.shutdown()
 

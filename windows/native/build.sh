@@ -7,3 +7,4 @@ mkdir -p ../../meeting_agent/native
     -lmmdevapi -luuid -lole32 -lksuser -lruntimeobject -ld3d11 -ldwmapi -lgdi32 -luser32
 "${CXX:-x86_64-w64-mingw32-g++}" -std=c++17 -O2 -s -static -municode -DUNICODE -D_UNICODE \
     -Wl,--no-insert-timestamp host.cpp -o ../../meeting_agent/native/tingsu-host.exe
+python3 build-webview.py

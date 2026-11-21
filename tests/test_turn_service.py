@@ -29,6 +29,9 @@ class ControlledClient:
     def cancel(self):
         self.cancels += 1
 
+    def stage_files(self, paths, material_scope):
+        return list(paths)
+
 
 class TurnServiceTests(unittest.TestCase):
     def setUp(self):

@@ -5,9 +5,6 @@ import re
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QImage
-
 from .runtime import child_options
 from .storage import CACHE, private_dir
 
@@ -28,17 +25,30 @@ MEDIA = {
 }
 
 
+def _image_bytes(path, *options):
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(path), "-frames:v", "1",
+             "-filter_threads", "1", "-threads", "1", *options, "pipe:1"],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, **child_options(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return b""
+    return result.stdout if result.returncode == 0 else b""
+
+
 def thumbnail(path, width=640):
-    image = QImage(str(path))
-    if image.isNull():
-        return ""
-    image = image.scaled(
-        width, width, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-    )
-    buf = QBuffer()
-    buf.open(QIODevice.OpenModeFlag.WriteOnly)
-    image.save(buf, "JPEG", 80)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.data().data()).decode()
+    jpeg = _image_bytes(path, "-vf", f"scale={width}:{width}:force_original_aspect_ratio=decrease",
+                        "-c:v", "mjpeg", "-q:v", "4", "-f", "image2pipe")
+    return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else ""
+
+
+def _has_picture(path):
+    rgb = _image_bytes(path, "-vf", "scale=16:9", "-pix_fmt", "rgb24", "-f", "rawvideo")
+    if len(rgb) != 16 * 9 * 3:
+        return False
+    pixels = zip(rgb[0::3], rgb[1::3], rgb[2::3])
+    return sum(max(pixel) + min(pixel) > 50 for pixel in pixels) > 12
 
 
 def describe(path):
@@ -95,14 +105,7 @@ def describe(path):
                     **child_options(),
                     timeout=35,
                 )
-                preview = QImage(str(cover)).scaled(16, 9)
-                if (
-                    not preview.isNull()
-                    and sum(
-                        preview.pixelColor(x, y).lightness() > 25 for x in range(16) for y in range(9)
-                    )
-                    > 12
-                ):
+                if _has_picture(cover):
                     break
         name = re.sub(r"^\d{14}-|[-－]视频-\d+-共享屏幕$", "", path.stem)
         data = dict(

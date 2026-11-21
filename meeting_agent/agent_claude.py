@@ -7,12 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import uuid
 
 from .agent_materials import AgentError
-from .agent_tools import GUIDANCE, TOOLS
+from .agent_tools import LOCAL_GUIDANCE, LOCAL_TOOLS
 from .local_cli import LocalCLI
 from .meeting_mcp import meeting_mcp_reply
+from .office_files import OFFICE_TOOLS, inspect_office
 from .runtime import app_directory
 
 
@@ -122,29 +124,64 @@ def _failure_detail(raw, code=None):
     return prefix + "未返回完整回复。请在终端中使用同一账号和模型运行 claude，检查会话及 CLI 配置。"
 
 
-def _control_response(packet, handler):
+FILE_TOOLS = ("Read", "Grep", "Glob")
+CLAUDE_TOOLS = {**LOCAL_TOOLS, **OFFICE_TOOLS}
+
+
+def _workspace_read(request, workspace):
+    name, args = request.get("tool_name"), request.get("input")
+    if name not in FILE_TOOLS or not isinstance(args, dict):
+        return False
+    path = args.get("file_path") if name == "Read" else args.get("path", ".")
+    if not isinstance(path, str) or not path:
+        return False
+    if name == "Glob":
+        if not isinstance(args.get("pattern"), str):
+            return False
+        pattern = Path(args["pattern"])
+        if pattern.anchor or ".." in pattern.parts:
+            return False
+    try:
+        candidate = workspace / Path(path).expanduser()
+        if not candidate.is_relative_to(workspace):
+            return False
+        target = candidate.resolve(strict=True)
+        return target.is_relative_to(workspace)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _control_response(packet, handler, workspace):
     request = packet["request"]
     subtype = request.get("subtype")
     reply = {"request_id": packet["request_id"], "subtype": "success"}
     if subtype == "mcp_message" and request.get("server_name") == "meeting":
-        mcp = meeting_mcp_reply(request.get("message"), handler)
+        def run(name, args):
+            if name == "inspect_office":
+                return inspect_office(workspace, args)
+            return handler(name, args)
+
+        mcp = meeting_mcp_reply(request.get("message"), run if handler else None, tools=CLAUDE_TOOLS)
         # The outer SDK request still needs an acknowledgement for a JSON-RPC notification.
         reply["response"] = {"mcp_response": mcp or {"jsonrpc": "2.0", "result": {}}}
     elif subtype == "can_use_tool":
-        reply["response"] = {"behavior": "deny", "message": "本次会议仅启用听序的会议工具。"}
+        if _workspace_read(request, workspace):
+            reply["response"] = {"behavior": "allow", "updatedInput": request["input"]}
+        else:
+            reply["response"] = {"behavior": "deny", "message": "请选择本次会议工作目录中的文件。"}
     else:
         reply.update(subtype="error", error="Unsupported control request")
     return {"type": "control_response", "response": reply}
 
 
 class ClaudeBackend:
-    def __init__(self, model="", executable="", effort="", speed=""):
+    def __init__(self, model="", executable="", effort="", speed="", workspace=None):
         self.cli = LocalCLI("claude", executable)
         self.model = model
         self.effort, self.speed = effort, speed
         self.flags = set()
-        self.dont_ask = False
-        self.workspace = app_directory("data") / "claude-workspace"
+        self.state_dir = app_directory("data") / "claude-workspace"
+        self.workspace = Path(workspace or self.state_dir / "files").resolve()
         self.projects = None
         self.drafts = None
         self.proc = None
@@ -178,9 +215,6 @@ class ClaudeBackend:
         self.workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
         code, help_text = await self._probe("--help")
         self.flags = set(re.findall(r"--[a-z][a-z0-9-]*", help_text.decode(errors="replace")))
-        # Older SDK-compatible releases accept only their default permission mode.
-        # All built-ins remain disabled and the control handler rejects permission prompts.
-        self.dont_ask = b'"dontAsk"' in help_text
         if code or not {"--input-format", "--output-format", "--strict-mcp-config", "--tools"} <= self.flags:
             raise AgentError("所选程序不支持 Claude Code 的双向 stream-json 会议协议，请检查可执行文件或更新 CLI。")
         if self.effort and "--effort" not in self.flags:
@@ -219,7 +253,7 @@ class ClaudeBackend:
         # The CLI materializes sessions on first prompt. Remember empty meeting
         # sessions across an app restart without writing fabricated Claude transcripts.
         profile = hashlib.sha256(os.fsencode(config.resolve())).hexdigest()[:20]
-        self.drafts = self.workspace / "drafts" / profile
+        self.drafts = self.state_dir / "drafts" / profile
         self.drafts.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _sessions(self):
@@ -244,7 +278,39 @@ class ClaudeBackend:
         return await asyncio.to_thread(self._sessions)
 
     def _native(self, sid):
-        return next(self.projects.glob("*/" + sid + ".jsonl"), None)
+        # A native resume across directories may record later turns under a new
+        # project. Start from the most recently updated native transcript.
+        return max(self.projects.glob("*/" + sid + ".jsonl"), key=lambda p: p.stat().st_mtime_ns, default=None)
+
+    def _resume_argument(self, native):
+        if "--safe-mode" in self.flags:
+            return str(native)
+        # Legacy Claude resolves a UUID only in its cwd's project directory and
+        # assigns a different UUID when passed a JSONL path. Expose the existing
+        # transcript at the legacy CLI's own project key without moving history.
+        key = re.sub(r"[^a-zA-Z0-9]", "-", str(self.workspace))
+        project = self.projects / key
+        target = project / native.name
+        if not target.exists():
+            project.mkdir(parents=True, exist_ok=True, mode=0o700)
+            try:
+                target.hardlink_to(native)
+            except FileExistsError:
+                pass
+            except OSError:
+                # Some network/home filesystems lack hard links.
+                try:
+                    out = target.open("xb")
+                except FileExistsError:
+                    pass
+                else:
+                    try:
+                        with out, native.open("rb") as source:
+                            shutil.copyfileobj(source, out)
+                    except OSError:
+                        target.unlink(missing_ok=True)
+                        raise
+        return native.stem
 
     async def open_session(self, session_id, title):
         if session_id:
@@ -265,7 +331,7 @@ class ClaudeBackend:
         native = await asyncio.to_thread(self._native, session_id)
         draft = self.drafts / (session_id + ".txt")
         if native:
-            args = ["--resume", session_id]
+            args = ["--resume", await asyncio.to_thread(self._resume_argument, native)]
         elif draft.is_file():
             args = ["--session-id", session_id]
             if "--name" in self.flags:
@@ -276,7 +342,9 @@ class ClaudeBackend:
             args.extend(["--model", self.model])
         if self.effort:
             args.extend(["--effort", self.effort])
-        settings = {}
+        # Ask the SDK host to validate file-tool paths even if the user's CLI has
+        # broad allow rules. Newer CLIs also enforce the working-directory fence.
+        settings = {"permissions": {"ask": list(FILE_TOOLS), "blockReadsOutsideWorkingDirectories": True}}
         if "--safe-mode" in self.flags:
             args.append("--safe-mode")
         else:
@@ -285,8 +353,6 @@ class ClaudeBackend:
             settings["fastMode"] = self.speed == "fast"
         if settings and "--settings" in self.flags:
             args.extend(["--settings", json.dumps(settings)])
-        if self.dont_ask:
-            args.extend(["--permission-mode", "dontAsk"])
         if "--setting-sources" in self.flags:
             args.extend(["--setting-sources", "user"])
         for flag in ("--no-chrome", "--disable-slash-commands", "--include-partial-messages"):
@@ -300,7 +366,7 @@ class ClaudeBackend:
                     "--mcp-config",
                     '{"mcpServers":{"meeting":{"type":"sdk","name":"meeting"}}}',
                     "--allowedTools",
-                    ",".join("mcp__meeting__" + n for n in TOOLS),
+                    ",".join("mcp__meeting__" + n for n in CLAUDE_TOOLS),
                 ]
             )
         proc = await self._spawn(
@@ -308,13 +374,15 @@ class ClaudeBackend:
             "--verbose",
             "--strict-mcp-config",
             "--tools",
-            "",
+            ",".join(FILE_TOOLS),
+            "--permission-prompt-tool",
+            "stdio",
             "--input-format",
             "stream-json",
             "--output-format",
             "stream-json",
             "--system-prompt",
-            GUIDANCE,
+            LOCAL_GUIDANCE,
             "--max-turns",
             "12",
             *args,
@@ -377,7 +445,8 @@ class ClaudeBackend:
                     },
                 )
             elif kind == "control_request":
-                await _write(proc, _control_response(packet, handler))
+                reply = await asyncio.to_thread(_control_response, packet, handler, self.workspace)
+                await _write(proc, reply)
             elif kind == "stream_event":
                 delta = packet["event"].get("delta") or {}
                 if delta.get("type") == "text_delta" and delta.get("text"):

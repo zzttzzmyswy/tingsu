@@ -15,7 +15,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 from threading import Thread
 
-from desktop import Page
+from desktop import debug_environment, Page
 from openai_fixture import Fixture
 
 TOPICS = ("路线图 <春季>", "渠道复盘 & 预算")
@@ -192,7 +192,7 @@ def run(app, wine, wayland, *, fixture=TopicModel, exercise=scenario):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
-            env["QTWEBENGINE_REMOTE_DEBUGGING"] = f"127.0.0.1:{port}"
+            env.update(debug_environment(port))
             proc = subprocess.Popen(command, cwd=root, env=env, start_new_session=True)
             page = None
             try:

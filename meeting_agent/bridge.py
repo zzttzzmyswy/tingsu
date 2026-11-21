@@ -6,10 +6,11 @@ import os
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, Signal, Slot, Qt
-from PySide6.QtWidgets import QFileDialog
+import subprocess
+from functools import partial
 
 from .agent_providers import PROVIDERS, provider_choices
+from .agent_workspace import MeetingWorkspace
 from .agent_options import LOCAL_PROVIDERS, preferences
 from .agents import AgentClient, AgentCancelled
 from .asr import ASRConfig
@@ -28,18 +29,13 @@ def clock(seconds):
     return f"{sec//3600:02d}:{sec//60%60:02d}:{sec%60:02d}"
 
 
-class Bridge(QObject):
-    state = Signal(str)
-    notice = Signal(str, str)
-    event = Signal(str, str)
-    dispatch = Signal(object)
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.window = parent
-        self.login = CodexLogin(self)
-        self.login.finished.connect(self.login_finished)
-        self.login.link_available.connect(self.update)
+class Bridge:
+    def __init__(self, host):
+        self.host = host
+        self.state = partial(host.signal, "state")
+        self.event = partial(host.signal, "event")
+        self.notice = partial(host.signal, "notice")
+        self.login = CodexLogin(post=self.post, finished=self.login_finished, link_available=self.update)
         self.store, self.settings = Store(), Settings()
         self.mid = self.settings.values["selected"]
         if not self.store.meeting(self.mid):
@@ -55,22 +51,15 @@ class Bridge(QObject):
         self.generation, self.screen_version = 0, 0
         self.turns = TurnService(
             self.store, post=self.post, position=self.position, prepare_frame=self.prepare_turn_frame,
-            changed=self.update, stream=lambda text: self.event.emit("delta", text),
-            notify=self.notice.emit, automatic=self.settings.values["auto"],
+            changed=self.update, stream=lambda text: self.event("delta", text),
+            notify=self.notice, automatic=self.settings.values["auto"],
         )
         self.frame = self.frame_image = ""
         self.screen_on = False
         self.closed = False
         self.limit = 120
-        self.dispatch.connect(self.deliver, Qt.ConnectionType.QueuedConnection)
-        self.refresh = QTimer(self)
-        self.refresh.setSingleShot(True)
-        self.refresh.setInterval(45)
-        self.refresh.timeout.connect(self.publish)
-        self.ticker = QTimer(self)
-        self.ticker.setInterval(500)
-        self.ticker.timeout.connect(self.publish_position)
-        self.ticker.start()
+        self.refresh = None
+        self.ticker = self.host.later(0.5, self.tick)
         self.transcription = TranscriptionService(
             self.store, DATA / "audio", changed=lambda: self.post(self.update),
             transcribed=lambda mid, end, has: self.post(lambda: self.transcribed(mid, end, has)),
@@ -78,7 +67,6 @@ class Bridge(QObject):
             completed=lambda mid: self.transcription_notice(mid, "已完成本次转写", "ok"),
         )
 
-    @Slot(object)
     def deliver(self, fn):
         if not self.closed:
             try:
@@ -88,7 +76,7 @@ class Bridge(QObject):
 
     def post(self, fn):
         if not self.closed:
-            self.dispatch.emit(fn)
+            self.host.post(lambda: self.deliver(fn))
 
     def work(self, task, done, failed=None):
         def run():
@@ -102,10 +90,17 @@ class Bridge(QObject):
         threading.Thread(target=run, daemon=True).start()
 
     def update(self):
-        self.refresh.start()
+        if self.refresh:
+            self.refresh.cancel()
+        self.refresh = self.host.later(0.045, self.publish)
+
+    def tick(self):
+        if not self.closed:
+            self.publish_position()
+            self.ticker = self.host.later(0.5, self.tick)
 
     def fail(self, exc):
-        self.notice.emit(str(exc)[:800] or type(exc).__name__, "error")
+        self.notice(str(exc)[:800] or type(exc).__name__, "error")
         self.update()
 
     @property
@@ -122,7 +117,7 @@ class Bridge(QObject):
     def transcription_notice(self, mid, message, level):
         def show():
             if mid == self.mid:
-                self.notice.emit(message[:800], level)
+                self.notice(message[:800], level)
                 self.update()
 
         self.post(show)
@@ -141,13 +136,12 @@ class Bridge(QObject):
         if self.capture_status == "recording":
             position = self.transcription.position
             if position is not None:
-                self.event.emit("position", str(position))
+                self.event("position", str(position))
 
     def position(self):
         position = self.transcription.position
         return position if position is not None else self.current()["duration"]
 
-    @Slot()
     def ready(self):
         self.publish()
         self.load_sources()
@@ -170,6 +164,8 @@ class Bridge(QObject):
             capture=self.capture_status,
             agent=self.agent_status,
             agentName=self.agent_name,
+            agentWorkspace=str(self.client.workspace.directory) if self.client and
+                self.agent_status == "ready" and self.agent_name in LOCAL_PROVIDERS else "",
             session=self.session,
             sessions=self.sessions,
             sending=self.turns.sending,
@@ -178,13 +174,12 @@ class Bridge(QObject):
             frame=self.frame_image,
             screen=self.screen_on,
             xwayland=xwayland_available(),
+            windowsDesktop=os.name == "nt",
         )
-        self.state.emit(json.dumps(data, ensure_ascii=False))
+        self.state(json.dumps(data, ensure_ascii=False))
 
-    @Slot(str, str)
-    def command(self, name, raw):
+    def command(self, name, args):
         try:
-            args = json.loads(raw)
             if not isinstance(args, dict) or name.startswith("_"):
                 raise ValueError("操作无效")
             action = getattr(self, "cmd_" + name, None)
@@ -241,12 +236,10 @@ class Bridge(QObject):
         self.work(scan, done, failed)
 
     def cmd_import_media(self, a):
-        files, _ = QFileDialog.getOpenFileNames(
-            self.window,
-            "添加会议录屏或音频",
-            "",
-            "媒体文件 (" + " ".join("*" + s for s in sorted(MEDIA)) + ")",
-        )
+        self.host.dialog("open-files", "添加会议录屏或音频", self.import_media,
+                         filter=" ".join("*" + s for s in sorted(MEDIA)))
+
+    def import_media(self, files):
         if files:
             self.store.add_media(files)
             if self.library_busy:
@@ -299,8 +292,8 @@ class Bridge(QObject):
         self.settings.save(**values)
         self.turns.set_automatic(self.settings.values["auto"])
         self.publish()
-        self.event.emit("settings-saved", "")
-        self.notice.emit("设置已保存", "ok")
+        self.event("settings-saved", "")
+        self.notice("设置已保存", "ok")
 
     def change(self, mid):
         self.check_idle()
@@ -315,7 +308,7 @@ class Bridge(QObject):
         self.transcription.forget_speakers()
         self.settings.save(selected=mid)
         self.update()
-        self.event.emit("workspace", "")
+        self.event("workspace", "")
 
     def cmd_select(self, a):
         if a["id"] != self.mid:
@@ -359,8 +352,8 @@ class Bridge(QObject):
         self.disconnect_agent()
         self.files = []
         self.publish()
-        self.event.emit("topic-saved", "")
-        self.notice.emit("会议已加入主题", "ok")
+        self.event("topic-saved", "")
+        self.notice("会议已加入主题", "ok")
 
     def source(self, sid):
         found = next((s for s in self.sources if self.source_key(s) == sid), None)
@@ -398,7 +391,7 @@ class Bridge(QObject):
         after = self.store.count_events_from(self.mid, at)
         self.limit = max(self.limit, after + 2)
         self.publish()
-        self.event.emit("jump", str(at))
+        self.event("jump", str(at))
 
     def cmd_search_events(self, a):
         mid = self.mid
@@ -412,14 +405,14 @@ class Bridge(QObject):
             if self.mid == mid:
                 total, items = result
                 payload = dict(meeting=mid, id=request_id, offset=offset, total=total, items=items)
-                self.event.emit("search-results", json.dumps(payload, ensure_ascii=False))
+                self.event("search-results", json.dumps(payload, ensure_ascii=False))
 
         self.work(lambda: self.store.search_events(mid, query, speaker, category, offset), done)
 
     def cmd_note(self, a):
         op = {"add": "create_note", "edit": "update_note", "delete": "delete_note"}[a["op"]]
         self.store.tool(self.mid, op, a, "我")
-        self.event.emit("note-saved", "")
+        self.event("note-saved", "")
         self.update()
 
     def cmd_topic_note(self, a):
@@ -429,26 +422,29 @@ class Bridge(QObject):
               "status": "set_topic_note_status", "share": "share_note_to_topic"}[a["op"]]
         self.store.tool(self.mid, op, a, "我")
         self.publish()
-        self.event.emit("note-saved", "")
+        self.event("note-saved", "")
 
     def cmd_export(self, a):
         title = self.current()["title"]
         name = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)
-        target, _ = QFileDialog.getSaveFileName(
-            self.window, "导出会议记录", name + ".md", "Markdown (*.md)"
-        )
+        meeting = self.current()
+        self.host.dialog("save-file", "导出会议记录", lambda target: self.export(meeting, target),
+                         path=name + ".md", filter="*.md")
+
+    def export(self, meeting, target):
         if not target:
             return
-        lines = ["# " + title, "", self.current()["created"], "", "## 会议动态", ""]
-        for e in self.store.events(self.mid):
+        title = meeting["title"]
+        lines = ["# " + title, "", meeting["created"], "", "## 会议动态", ""]
+        for e in self.store.events(meeting["id"]):
             lines += [f"**{clock(e['at'])} · {e['speaker']}**", "", e["text"], ""]
             if json.loads(e["files"]):
                 lines += ["附件：" + "、".join(json.loads(e["files"])), ""]
         lines += ["## 会议便签", ""]
-        for n in self.store.notes(self.mid):
+        for n in self.store.notes(meeting["id"]):
             lines += [f"### {n['title']}", "", KINDS[n["kind"]], "", n["body"], ""]
         Path(target).write_text("\n".join(lines), encoding="utf-8")
-        self.notice.emit("会议记录已导出", "ok")
+        self.notice("会议记录已导出", "ok")
 
     def cmd_start(self, a):
         self.check_idle()
@@ -484,12 +480,16 @@ class Bridge(QObject):
     def cmd_attach(self, a):
         if self.agent_status != "ready":
             raise ValueError("请先连接 AI 会话")
-        files, _ = QFileDialog.getOpenFileNames(self.window, "添加会议材料")
-        for f in files:
-            p = Path(f)
-            if p not in self.files:
-                self.files.append(p)
-        self.update()
+        mid, client = self.mid, self.client
+        def selected(files):
+            if mid != self.mid or client is not self.client:
+                return
+            for f in files or []:
+                p = Path(f)
+                if p not in self.files:
+                    self.files.append(p)
+            self.update()
+        self.host.dialog("open-files", "添加会议材料", selected)
 
     def cmd_remove_file(self, a):
         idx = int(a["index"])
@@ -515,18 +515,25 @@ class Bridge(QObject):
         def present(windows):
             if self.screen_version == version and not self.screen_on:
                 self.screen_windows = {window["id"]: window for window in windows}
-                self.event.emit("screen-windows", json.dumps(windows, ensure_ascii=False))
-        self.work(xwayland_windows, present)
+                self.event("screen-windows", json.dumps(windows, ensure_ascii=False))
+        if os.name == "nt":
+            from .windows_capture import list_windows
+            self.work(list_windows, present)
+        else:
+            self.work(xwayland_windows, present)
 
     def cmd_screen(self, a):
         if self.screen_on:
             self.cmd_snapshot(a)
             return
+        if os.name == "nt" and "window" not in a:
+            self.cmd_screen_windows({})
+            return
         selected = None
         if "window" in a:
             selected = self.screen_windows.get(a["window"])
-            if not selected or not xwayland_available():
-                raise ValueError("请先从 XWayland 窗口列表选择会议窗口。")
+            if not selected or not (os.name == "nt" or xwayland_available()):
+                raise ValueError("请先从窗口列表选择会议窗口。")
         self.screen_windows.clear()
         self.screen_version += 1
         version = self.screen_version
@@ -546,7 +553,8 @@ class Bridge(QObject):
 
         self.screen = ScreenCapture(
             on_frame=frame, on_error=failed, output_dir=private_dir(DATA / "frames" / self.mid),
-            xwindow=selected,
+            xwindow=selected if os.name != "nt" else None,
+            window_token=selected["id"] if os.name == "nt" and selected else None,
         )
         try:
             self.screen.start()
@@ -613,6 +621,16 @@ class Bridge(QObject):
     def cmd_disconnect(self, a):
         self.disconnect_agent()
 
+    def cmd_open_agent_workspace(self, a):
+        if self.agent_status != "ready" or self.agent_name not in LOCAL_PROVIDERS:
+            raise ValueError("请先连接本机 AI 助手")
+        directory = self.client.workspace.directory
+        if os.name == "nt":
+            os.startfile(directory)
+        else:
+            from .local_cli import host_environment
+            subprocess.Popen(["xdg-open", str(directory)], env=host_environment(), stdout=subprocess.DEVNULL)
+
     def cmd_codex_models(self, a):
         path = a.get("path", self.settings.values.get("codex_path", ""))
         def load():
@@ -626,8 +644,8 @@ class Bridge(QObject):
         def loaded(rows):
             self.agent_catalogs["codex"] = rows
             self.publish()
-            self.event.emit("agent-catalog", "codex")
-            self.notice.emit(f"本机 Codex 返回了 {len(rows)} 个模型", "ok")
+            self.event("agent-catalog", "codex")
+            self.notice(f"本机 Codex 返回了 {len(rows)} 个模型", "ok")
 
         self.work(load, loaded)
 
@@ -645,8 +663,9 @@ class Bridge(QObject):
             opts = preferences(a["options"])
             if opts != preferences(saved.get(provider)):
                 self.settings.save(local_agent_options={**saved, provider: opts})
+        workspace = MeetingWorkspace(DATA, meeting["id"], meeting["topic_id"])
         client = AgentClient(
-            provider, api_key=self.settings.key("openai") if provider == "openai" else "",
+            provider, workspace=workspace, api_key=self.settings.key("openai") if provider == "openai" else "",
             executable=self.settings.values.get(provider + "_path", ""),
             **(opts or {"model": self.settings.values["model"]})
         )
@@ -655,6 +674,7 @@ class Bridge(QObject):
         self.update()
 
         def connect():
+            workspace.prepare(self.store.workspace_meetings(meeting["id"]))
             client.connect()
             if meeting["topic_id"]:
                 return []
@@ -670,7 +690,7 @@ class Bridge(QObject):
                 self.cmd_session({"id": saved})
             else:
                 self.update()
-                self.event.emit("choose", "")
+                self.event("choose", "")
 
         def failed(exc):
             if self.generation == generation:
@@ -712,15 +732,15 @@ class Bridge(QObject):
                 self.agent_catalogs[provider] = client.session_options
             self.turns.bind(mid, client, self.current()["duration"])
             self.update()
-            self.event.emit("connected", "")
-            self.notice.emit("已连接主题「" + meeting["topic_name"] + "」的 AI 会话"
+            self.event("connected", "")
+            self.notice("已连接主题「" + meeting["topic_name"] + "」的 AI 会话"
                              if meeting["topic_id"] else "AI 会话已连接", "ok")
 
         def failed(exc):
             if generation == self.generation:
                 self.agent_status = "choose"
                 self.fail(exc)
-                self.event.emit("choose", "")
+                self.event("choose", "")
 
         title = meeting["topic_name"] or meeting["title"]
         self.work(lambda: client.open_session(requested, title=title), done, failed)
@@ -728,7 +748,7 @@ class Bridge(QObject):
     def cmd_send(self, a):
         self.turns.submit(a.get("text", ""), self.files)
         self.files = []
-        self.event.emit("sent", "")
+        self.event("sent", "")
 
     def prepare_turn_frame(self, mid, at):
         if not self.settings.values["share_frames"]:
@@ -759,8 +779,11 @@ class Bridge(QObject):
 
     def shutdown(self):
         self.closed = True
+        if self.refresh:
+            self.refresh.cancel()
+        self.ticker.cancel()
         self.login.stop()
-        self.turns.detach()
+        self.turns.close()
         self.transcription.close()
         self.stop_screen()
         if self.client:

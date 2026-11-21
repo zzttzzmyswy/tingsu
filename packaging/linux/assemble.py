@@ -1,4 +1,4 @@
-"""Stage a relocatable Qt/Python desktop runtime from the clean Ubuntu builder."""
+"""Stage a relocatable Python/audio runtime from the clean Ubuntu builder."""
 
 import os
 from pathlib import Path
@@ -13,8 +13,6 @@ prefix = usr / "lib/tingsu"
 python = prefix / "python"
 vendor = prefix / "native"
 wheel = Path("/opt/tingsu-python")
-qt = wheel / "PySide6/Qt"
-qtout = python / "PySide6/Qt"
 licenses = usr / "share/doc/tingsu/third-party"
 multiarch = Path("/usr/lib/x86_64-linux-gnu")
 tools = (
@@ -57,9 +55,7 @@ def tree(source, output, ignore=()):
 def package_lib(source, alias=None):
     source = Path(source)
     name = alias or source.name
-    if source.is_relative_to(qt / "lib"):
-        out = qtout / "lib" / name
-    elif source.is_relative_to(wheel):
+    if source.is_relative_to(wheel):
         out = python / source.relative_to(wheel)
     elif graphics_abi.match(name) or name == "libreadline.so.8":
         # Match the desktop driver and its loader from the same distribution.
@@ -71,18 +67,10 @@ def package_lib(source, alias=None):
 
 
 def include_dependencies(objects, *, fallback=None):
-    env = {
-        **os.environ,
-        "LD_LIBRARY_PATH": str(qt / "lib")
-        + ":"
-        + str(wheel / "PySide6")
-        + ":"
-        + str(wheel / "shiboken6"),
-    }
     required = set()
     for obj in objects:
         result = subprocess.run(
-            ["ldd", str(obj)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
+            ["ldd", str(obj)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
         )
         if "=> not found" in result.stdout:
             raise RuntimeError(f"Unresolved dependency in {obj}:\n{result.stdout}")
@@ -170,8 +158,7 @@ for path in (multiarch / "libpulsecommon-15.99.so",):
 
 for path in wheel.iterdir():
     if (
-        path.name == "PySide6"
-        or path.name in ("bin", "include", "__pycache__")
+        path.name in ("bin", "include", "__pycache__")
         or path.name.endswith(".dist-info")
     ):
         continue
@@ -180,83 +167,5 @@ for path in wheel.iterdir():
         elf_sources += list(path.rglob("*.so"))
     elif path.suffix == ".py":
         copy(path, python / path.name)
-pyside = wheel / "PySide6"
-module_names = (
-    "QtCore",
-    "QtGui",
-    "QtWidgets",
-    "QtNetwork",
-    "QtPrintSupport",
-    "QtOpenGL",
-    "QtOpenGLWidgets",
-    "QtWebEngineCore",
-    "QtWebEngineWidgets",
-    "QtWebChannel",
-    "QtQuick",
-    "QtQml",
-    "QtQuickWidgets",
-    "QtPositioning",
-    "QtDBus",
-    "QtSvg",
-)
-for name in module_names:
-    path = pyside / (name + ".abi3.so")
-    if not path.exists():
-        path = next(pyside.glob(name + ".*.so"))
-    copy(path, python / "PySide6" / path.name, binary=True)
-for path in pyside.glob("*.py"):
-    copy(path, python / "PySide6" / path.name)
-tree(pyside / "support", python / "PySide6/support")
-for path in pyside.glob("lib*.so*"):
-    copy(path, python / "PySide6" / path.name, binary=True)
-for category in (
-    "platforms",
-    "platforminputcontexts",
-    "wayland-shell-integration",
-    "wayland-graphics-integration-client",
-    "wayland-decoration-client",
-    "xcbglintegrations",
-    "imageformats",
-    "iconengines",
-    "tls",
-    "networkinformation",
-    "platformthemes",
-):
-    for so in (qt / "plugins" / category).glob("*.so"):
-        if so.name in (
-            "libqeglfs.so",
-            "libqvkkhrdisplay.so",
-            "libqvnc.so",
-            "libqtslibplugin.so",
-            "libqminimal.so",
-            "libqminimalegl.so",
-            "libqlinuxfb.so",
-            "libqgtk3.so",
-            "libqpdf.so",
-        ):
-            continue
-        copy(so, qtout / "plugins" / category / so.name, binary=True)
-copy(qt / "libexec/QtWebEngineProcess", qtout / "libexec/QtWebEngineProcess", binary=True)
-tree(qt / "resources", qtout / "resources")
-for language in ("en-US", "zh-CN", "zh-TW"):
-    path = qt / "translations/qtwebengine_locales" / (language + ".pak")
-    copy(path, qtout / "translations/qtwebengine_locales" / path.name)
-for path in (qt / "translations").glob("*_zh_CN.qm"):
-    copy(path, qtout / "translations" / path.name)
-for file in Path("/usr/share/fonts/opentype/noto").glob("NotoSansCJK-*.ttc"):
-    copy(file, usr / "share/fonts/noto" / file.name)
-for library in ("libnssckbi.so", "libsoftokn3.so", "libfreeblpriv3.so", "libfreebl3.so"):
-    so = multiarch / "nss" / library
-    copy(so, vendor / so.name, binary=True)
-    check = so.with_suffix(".chk")
-    if check.exists():
-        copy(check, vendor / check.name)
 include_dependencies(elf_sources)
-software_gl = prefix / "graphics-software"
-mesa = [multiarch / "libGLX_mesa.so.0", multiarch / "libEGL_mesa.so.0", multiarch / "dri/swrast_dri.so"]
-for library in mesa[:2]:
-    copy(library, software_gl / "lib" / library.name)
-copy(mesa[2], software_gl / "drivers" / mesa[2].name)
-include_dependencies(mesa, fallback=software_gl / "lib")
-copy("/usr/share/glvnd/egl_vendor.d/50_mesa.json", software_gl / "50_mesa.json")
 install_licenses()

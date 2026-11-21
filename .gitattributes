@@ -1,2 +1,4 @@
 # Keep the upstream FFmpeg build report verbatim on every platform.
 packaging/sources/windows-ffmpeg-9.1-build.txt -text -whitespace
+# Preserve the upstream WebView2 and JSON library license texts byte for byte.
+packaging/windows/licenses/*.txt -text -whitespace

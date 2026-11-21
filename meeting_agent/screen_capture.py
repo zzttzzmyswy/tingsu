@@ -187,7 +187,7 @@ class ScreenCapture:
 
     def __init__(
         self, on_frame: Callable[[Path], None], on_error: Callable[[str], None], output_dir: Path | str,
-        *, xwindow=None
+        *, xwindow=None, window_token=None
     ):
         self.on_frame = on_frame
         self.on_error = on_error
@@ -198,14 +198,12 @@ class ScreenCapture:
         self._condition = threading.Condition()
         self._latest = None
         self._finished = False
-        self._window = xwindow
+        self._window = window_token if os.name == "nt" else xwindow
         self._thread = threading.Thread(target=self._run, daemon=True, name="meeting-screen")
 
     def start(self) -> None:
-        if os.name == "nt":
-            from .windows_capture import choose_window
-
-            self._window = choose_window()
+        if os.name == "nt" and not self._window:
+            raise ValueError("请先选择要共享的 Windows 窗口。")
         self._thread.start()
 
     def stop(self) -> None:

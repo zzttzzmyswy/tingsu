@@ -114,7 +114,7 @@ def service_binary(name):
 
 def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspace_tools=False, worker_crash=False):
     from PIL import Image
-    from desktop import Page, make_fixtures, wait
+    from desktop import debug_environment, Page, make_fixtures, wait
 
     env = os.environ.copy()
     for name in (
@@ -253,7 +253,7 @@ def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspac
         process = start(
             "app",
             [app_path, "--wayland"],
-            {"QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}"},
+            debug_environment(port),
         )
         page = Page(port)
         cleanup.callback(page.close)
@@ -365,7 +365,7 @@ def verify(app_path, labwc, folder, claude_vision=False, meeting=False, workspac
             process.terminate()
             process.wait(15)
             page.close()
-            start("app-restart", [app_path, "--wayland"], {"QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}"})
+            start("app-restart", [app_path, "--wayland"], debug_environment(port))
             resumed = Page(port)
             cleanup.callback(resumed.close)
             resumed.until("S.meeting.title==='Wayland 截图验收' && S.events.some(e=>e.kind==='speech') && "

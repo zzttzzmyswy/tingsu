@@ -2,13 +2,13 @@
 
 import json
 
-from .agent_tools import TOOLS, execute, schema
+from .agent_tools import LOCAL_TOOLS, execute, schema
 
 # Streamable HTTP and the Claude SDK transport use the same tools capability.
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 
 
-def meeting_mcp_reply(message, handler):
+def meeting_mcp_reply(message, handler, *, tools=LOCAL_TOOLS):
     if not isinstance(message, dict):
         return {
             "jsonrpc": "2.0",
@@ -35,7 +35,7 @@ def meeting_mcp_reply(message, handler):
             "tools": (
                 [
                     {"name": name, "description": desc, "inputSchema": schema(fields)}
-                    for name, (desc, fields) in TOOLS.items()
+                    for name, (desc, fields) in tools.items()
                 ]
                 if handler is not None
                 else []
@@ -43,10 +43,10 @@ def meeting_mcp_reply(message, handler):
         }
     elif method == "tools/call":
         name = params.get("name")
-        if not isinstance(name, str) or name not in TOOLS or handler is None:
+        if not isinstance(name, str) or name not in tools or handler is None:
             response["error"] = {"code": -32602, "message": "Unknown meeting tool"}
         else:
-            output = execute(handler, name, params.get("arguments", {}))
+            output = execute(handler, name, params.get("arguments", {}), tools=tools)
             response["result"] = {
                 "content": [{"type": "text", "text": output}],
                 "isError": "error" in json.loads(output),

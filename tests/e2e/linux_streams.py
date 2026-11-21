@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 from contextlib import ExitStack
 
-from desktop import Page, wait
+from desktop import debug_environment, Page, wait
 
 
 def run(app, key, tts_ffmpeg):
@@ -134,7 +134,7 @@ def run(app, key, tts_ffmpeg):
         app_proc = start(
             "app",
             [str(app), "--x11"],
-            {"SILICONFLOW_API_KEY": key, "QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}"},
+            {"SILICONFLOW_API_KEY": key, **debug_environment(port)},
         )
         page = Page(port)
         stack.callback(page.close)

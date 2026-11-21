@@ -35,6 +35,7 @@ class Material:
     id: str
     name: str
     size: int
+    shared_frame: bool = False
 
     @property
     def mime(self):
@@ -88,33 +89,36 @@ def _extract_text(material, out):
 
 
 class MaterialLibrary:
-    def __init__(self, directory):
+    def __init__(self, directory, *, text_cache=None):
         self.directory = Path(directory)
+        self.text_cache = Path(text_cache) if text_cache is not None else self.directory / ".text"
 
-    def add(self, source):
+    def add(self, source, *, filename=None, shared_frame=False):
         source = Path(source).expanduser()
         if not source.is_file():
             raise AgentError(f"找不到会议材料：{source.name}")
+        name = filename or source.name
+        if name in (".", "..") or not name or Path(name).name != name:
+            raise AgentError("无效的附件文件名")
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Publish the complete original and its name together, including on retries.
         temporary = Path(tempfile.mkdtemp(prefix=".adding-", dir=self.directory))
         try:
-            digest = hashlib.sha256(source.name.encode("utf-8") + b"\0")
+            digest = hashlib.sha256(name.encode("utf-8") + b"\0")
             size = 0
-            with source.open("rb") as origin, (temporary / "original").open("wb") as target:
+            with source.open("rb") as origin, (temporary / name).open("xb") as target:
                 while chunk := origin.read(1024 * 1024):
                     digest.update(chunk)
                     target.write(chunk)
                     size += len(chunk)
-            (temporary / "name.json").write_text(json.dumps(source.name), encoding="utf-8")
             identifier = digest.hexdigest()
             folder = self.directory / identifier
             try:
                 temporary.rename(folder)
             except OSError:
-                if not (folder / "original").is_file():
+                if not (folder / name).is_file():
                     raise
-            return Material(folder / "original", identifier, source.name, size)
+            return Material(folder / name, identifier, name, size, shared_frame)
         finally:
             if temporary.exists():
                 shutil.rmtree(temporary)
@@ -123,15 +127,28 @@ class MaterialLibrary:
         if not re.fullmatch(r"[a-f0-9]{64}", identifier):
             raise AgentError("请选择本场已发送的附件 ID")
         directory = self.directory / identifier
-        try:
-            path = directory / "original"
-            name = json.loads((directory / "name.json").read_text(encoding="utf-8"))
-            return Material(path, identifier, name, path.stat().st_size)
-        except FileNotFoundError as exc:
-            raise AgentError("本场会议没有该附件") from exc
+        if directory.is_dir() and not directory.is_symlink():
+            for path in directory.iterdir():
+                if path.is_file() and not path.is_symlink():
+                    return Material(path, identifier, path.name, path.stat().st_size)
+        raise AgentError("本场会议没有该附件")
+
+    def import_previous(self, directory, *, legacy=False):
+        """Recover originals from a v1.3 archive or a meeting that joined this topic."""
+        if directory == self.directory or not directory.is_dir():
+            return
+        for record in directory.iterdir():
+            if not re.fullmatch(r"[a-f0-9]{64}", record.name) or (self.directory / record.name).is_dir():
+                continue
+            if legacy:
+                name = json.loads((record / "name.json").read_text(encoding="utf-8"))
+                self.add(record / "original", filename=name)
+            else:
+                self.add(MaterialLibrary(directory)._get(record.name).path)
 
     def _text_view(self, material):
-        view = material.path.with_name("text.utf8")
+        self.text_cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+        view = self.text_cache / material.id
         if view.is_file():
             return view
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
@@ -198,23 +215,27 @@ class MaterialLibrary:
                 "view_bytes": size, "eof": end >= size, "content": content}
 
 
-def make_inputs(provider, text, attachments, context, *, frame=None):
+def make_inputs(provider, text, attachments, context, *, frame=None, workspace=None, shared_frames=()):
     responses = provider == "openai"
     text_type = "input_text" if responses else "text"
     request = {"request": text, "meeting_context": context}
     if attachments:
-        request["attachments"] = [material.info() for material in attachments]
+        request["attachments"] = [
+            {**m.info(), **({"path": m.path.relative_to(workspace).as_posix()} if workspace else {})}
+            for m in attachments
+        ]
     inputs = [{"type": text_type, "text": json.dumps(request, ensure_ascii=False)}]
     # Larger files remain available in full through the file tools. Bound only the
     # in-memory/native request, shared across all file and image blocks.
     remaining = 50_000_000 if responses else 24 * 1024 * 1024
-    files = [(m.path, m.name, m.mime, m.size) for m in attachments]
-    if frame:
-        shot = Path(frame)
+    files = [] if workspace else [(m.path, m.name, m.mime, m.size) for m in attachments]
+    shots = set()
+    for shot in dict.fromkeys(Path(p) for p in (*shared_frames, frame) if p):
+        shots.add(shot)
         files.insert(0, (shot, shot.name, mimetypes.guess_type(shot.name)[0], shot.stat().st_size))
     for path, name, mime, size in files:
         if size > remaining:
-            if frame and path == Path(frame):
+            if path in shots:
                 raise AgentError("截图超过图像请求容量，请降低截图尺寸。")
             continue
         claude_pdf = provider == "claude" and mime == "application/pdf"

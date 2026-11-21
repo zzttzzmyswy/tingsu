@@ -11,7 +11,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-from desktop import Page
+from desktop import debug_environment, Page
 from openai_fixture import Fixture
 
 
@@ -83,7 +83,7 @@ def run(app):
         env = dict(os.environ, HOME=folder, XDG_CONFIG_HOME=str(base / "config"),
                    XDG_DATA_HOME=str(base / "data"), XDG_CACHE_HOME=str(base / "cache"), QT_QPA_PLATFORM="xcb",
                    OPENAI_API_KEY="tingsu-local-acceptance", OPENAI_BASE_URL=f"http://127.0.0.1:{server.server_port}/v1",
-                   CODEX_HOME=str(base / "codex"), QTWEBENGINE_REMOTE_DEBUGGING=f"127.0.0.1:{port}")
+                   CODEX_HOME=str(base / "codex"), **debug_environment(port))
         env.pop("WAYLAND_DISPLAY", None)
         proc = subprocess.Popen([app, "--x11"], cwd=base, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         stack.callback(lambda: proc.wait(10))

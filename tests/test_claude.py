@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from meeting_agent.agent_claude import ClaudeBackend
+from meeting_agent.agent_claude import ClaudeBackend, _control_response
 from meeting_agent.agent_materials import AgentError
 from meeting_agent.meeting_mcp import meeting_mcp_reply
 
@@ -41,7 +41,11 @@ if 'auth' in args:
 if (root / 'fail').exists():
     print('Error: unknown option --broken, API key=SHOULD_NEVER_APPEAR', file=sys.stderr)
     sys.exit(2)
-assert args[args.index('--tools') + 1] == ''
+assert set(args[args.index('--tools') + 1].split(',')) == {'Read', 'Glob', 'Grep'}
+assert args[args.index('--permission-prompt-tool') + 1] == 'stdio'
+settings = json.loads(args[args.index('--settings') + 1])
+assert set(settings['permissions']['ask']) == {'Read', 'Glob', 'Grep'}
+assert settings['permissions']['blockReadsOutsideWorkingDirectories']
 assert '--strict-mcp-config' in args
 if legacy:
     assert not any(flag in args for flag in ('--safe-mode', '--system-prompt-snapshot', '--name', '--permission-mode', '--setting-sources'))
@@ -49,8 +53,7 @@ if legacy:
 else:
     assert '--safe-mode' in args
     assert args[args.index('--system-prompt-snapshot') + 1] == 'off'
-    assert args[args.index('--permission-mode') + 1] == 'dontAsk'
-sid = args[args.index('--resume' if '--resume' in args else '--session-id') + 1]
+sid = pathlib.Path(args[args.index('--resume') + 1]).stem if '--resume' in args else args[args.index('--session-id') + 1]
 path = root / 'projects' / 'test-project' / (sid + '.jsonl')
 assert ('--resume' in args) == path.exists()
 assert read()['request']['subtype'] == 'initialize'
@@ -74,7 +77,7 @@ assert set(t['name'] for t in listed) == {
     'list_notes', 'read_transcript', 'create_note', 'update_note', 'delete_note',
     'list_topic_meetings', 'read_topic_history',
     'list_topic_notes', 'create_topic_note', 'update_topic_note', 'set_topic_note_status',
-    'share_note_to_topic', 'delete_topic_note', 'list_attachments', 'read_attachment',
+    'share_note_to_topic', 'delete_topic_note', 'inspect_office',
 }
 result = mcp('tools/call',{'name':'list_notes','arguments':{}})
 assert json.loads(result['content'][0]['text']) == {'result':['marker']}
@@ -103,6 +106,31 @@ class TestCLI:
 
 
 class ClaudeTests(unittest.IsolatedAsyncioTestCase):
+    def test_file_tool_permissions_are_bound_to_selected_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            workspace = parent / "本次会议"
+            workspace.mkdir()
+            file = workspace / "附件.pdf"
+            file.touch()
+            sibling = parent / "其他会议.txt"
+            sibling.touch()
+
+            def behavior(name, **args):
+                packet = {"request_id": "p", "request": {"subtype": "can_use_tool", "tool_name": name,
+                                                        "input": args}}
+                return _control_response(packet, None, workspace)["response"]["response"]["behavior"]
+
+            self.assertEqual(behavior("Read", file_path=str(file)), "allow")
+            self.assertEqual(behavior("Grep", pattern="会议", path=file.name), "allow")
+            self.assertEqual(behavior("Glob", pattern="**/*.pdf"), "allow")
+            self.assertEqual(behavior("Glob", pattern="../**/*"), "deny")
+            self.assertEqual(behavior("Read", file_path=str(sibling)), "deny")
+            self.assertEqual(behavior("Edit", file_path=str(file)), "deny")
+            if os.name != "nt":
+                (workspace / "link").symlink_to(sibling)
+                self.assertEqual(behavior("Read", file_path="link"), "deny")
+
     async def test_legacy_auth_session_resume_and_private_exit_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp, patch(
             "meeting_agent.agent_claude.app_directory", return_value=Path(tmp)

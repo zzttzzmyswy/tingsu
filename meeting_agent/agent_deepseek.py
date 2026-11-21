@@ -12,28 +12,57 @@ from pathlib import Path
 
 from .agent_materials import AgentCancelled, AgentError
 from .agent_options import acp_choices
-from .agent_tools import GUIDANCE, TOOLS
+from .agent_tools import LOCAL_GUIDANCE, LOCAL_TOOLS
 from .local_cli import LocalCLI
 from .meeting_mcp import meeting_mcp_reply
 from .runtime import app_directory
 
 
-# ACP mounts client-supplied MCP tools in the session's agent scope. Hide global coding
-# tools and reject unrelated scoped tools as well. The ACP row explicitly requires this
-# plugin's readiness, so a missing/incompatible guard cannot start an unrestricted server.
+# ACP resumes against the original session header directory. Its workingDirectory
+# service controls the live tools' cwd, including when restoring an older session.
 _GUARD = """
+import { realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 export const name = 'tingsu-meeting-tools';
-export const inject = ['agents', 'tools'];
+export const inject = ['agents', 'tools', 'workingDirectory'];
 export function apply(ctx) {
   const allowed = new Set(ALLOWED_TOOLS);
-  ctx.on('agent/created', ({agent}) => {
-    agent.ctx.tools.restrict({allow: []});
-    agent.ctx.tools.guard(call => allowed.has(call.name) ? undefined : 'Meeting tools only');
+  const root = realpathSync(process.cwd());
+  const paths = {read: 'file_path', read_image: 'file_path', glob: 'path', grep: 'path',
+                 office_render: 'input', office_convert: 'input', office_recalculate: 'input'};
+  const skills = new Set(['office', 'office-docx', 'office-xlsx', 'office-pptx']);
+  ctx.on('agent/created', async ({agent, signal}) => {
+    await ctx.workingDirectory.set(agent, root, signal);
+    agent.ctx.tools.restrict({allow: [...Object.keys(paths), 'skill'].filter(name => ctx.tools.get(name))});
+    const outputs = new Set();
+    // Conversions return an Office Kit-owned temporary file outside the workspace.
+    // Grant the producing session access to that exact output for follow-up analysis.
+    agent.ctx.on('tools/result', (exec, result) => {
+      if (exec.agent === agent && !result.isError && ['office_convert', 'office_recalculate'].includes(exec.name))
+        outputs.add(realpathSync(result.value.file));
+    });
+    agent.ctx.tools.guard(call => {
+      if (allowed.has(call.name)) return;
+      if (call.name === 'skill' && skills.has(call.arguments?.name)) return;
+      if (!Object.hasOwn(paths, call.name)) return 'Meeting tools only';
+      const arg = call.arguments?.[paths[call.name]] ?? '.';
+      try {
+        // ripgrep receives the original path. A symlink before ".." can resolve
+        // differently from path.resolve() when opened by a subprocess.
+        if (arg.replaceAll('\\\\', '/').split('/').includes('..')) return 'Use a path within this workspace';
+        const target = realpathSync(resolve(root, arg));
+        const path = relative(root, target);
+        if (relative(root, ctx.workingDirectory.get(agent.session)) === ''
+            && (outputs.has(target) || (path !== '..' && !path.startsWith('..' + sep) && !isAbsolute(path)))) return;
+      } catch { /* A missing path or a dangling symlink cannot be read. */ }
+      return 'Choose an existing path in the meeting workspace';
+    });
   }, {prepend: true});
   ctx.provide('tingsuMeetingTools', {ready: true});
 }
 """
-_TOOL_NAMES = {f"mcp__tingsu__{tool}" for tool in (*TOOLS, "load_tools")}
+_TOOL_NAMES = {f"mcp__tingsu__{tool}" for tool in (*LOCAL_TOOLS, "load_tools")}
+_FILE_TOOLS = {"read", "read_image", "glob", "grep", "skill", "office_render", "office_convert", "office_recalculate"}
 
 
 def _profile(directory):
@@ -41,10 +70,18 @@ def _profile(directory):
     plugin.write_text(_GUARD.replace("ALLOWED_TOOLS", json.dumps(sorted(_TOOL_NAMES))), encoding="utf-8")
     patch = directory / "meeting.patch.yml"
     patch.write_text(json.dumps([
-        {"insert": [{"id": "tingsu-tools", "name": plugin.as_uri()}]},
+        {"insert": [
+            {"id": "tingsu-tools", "name": plugin.as_uri()},
+            {"id": "tingsu-office-kit", "name": "@deepseek-ai/dsh-office-kit",
+             "config": {"outputDirectory": str(directory / "office-output")}},
+            {"id": "tingsu-tool-office", "name": "@deepseek-ai/dsh-tool-office"},
+            {"id": "tingsu-skill-office", "name": "@deepseek-ai/dsh-skill-office",
+             "config": {"pythonEnvironment": "user"}},
+        ]},
         {"id": "acp", "inject": ["acpAppStartup", "tingsuMeetingTools"]},
-        {"id": "system-prompt", "config": {"personaPrefix": GUIDANCE}},
+        {"id": "system-prompt", "config": {"personaPrefix": LOCAL_GUIDANCE}},
         {"id": "agent-instructions", "disabled": True},
+        {"id": "skill-filesystem", "disabled": True},
         {"id": "mcp-resources", "disabled": True},
         {"id": "session-log-deepseek", "config": {"enabled": False}},
     ], ensure_ascii=False), encoding="utf-8")
@@ -116,11 +153,12 @@ class _MeetingEndpoint:
 
 
 class DeepSeekBackend:
-    def __init__(self, model="", executable="", effort="", speed=""):
+    def __init__(self, model="", executable="", effort="", speed="", workspace=None):
         self.effort, self.speed = effort, speed
         self.session_options = {}
         self.model = model
         self.cli = LocalCLI("deepseek", executable)
+        self.cwd = Path(workspace or app_directory("data") / "deepseek-workspace").resolve()
         self.proc = self.reader = self.profile = self.endpoint = None
         self.pending = {}
         self.next_id = 0
@@ -133,13 +171,13 @@ class DeepSeekBackend:
     async def connect(self):
         if self.proc and self.proc.returncode is None:
             return
-        self.cwd = app_directory("data").resolve() / "deepseek-workspace"
         self.cwd.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.profile = tempfile.TemporaryDirectory(prefix="tingsu-dsh-")
         try:
             patch = _profile(Path(self.profile.name).resolve())
             self.proc = await self.cli.spawn(
-                "acp", "--patch", patch, cwd=str(self.cwd), env_overrides={"DSH_PERMISSION_MODE": "read-only"},
+                "acp", "--patch", patch, cwd=str(self.cwd),
+                env_overrides={"DSH_PERMISSION_MODE": "read-only", "RIPGREP_CONFIG_PATH": None},
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
                 limit=32 * 1024 * 1024,
             )
@@ -181,7 +219,7 @@ class DeepSeekBackend:
                         params = packet.get("params", {})
                         call_id = params.get("toolCall", {}).get("toolCallId")
                         allowed = (params.get("sessionId") == self.active and self.on_message is not None
-                                   and self.permission_calls.get(call_id) in _TOOL_NAMES)
+                                   and self.permission_calls.get(call_id) in _TOOL_NAMES | _FILE_TOOLS)
                         kind = "allow_once" if allowed else "reject_once"
                         option = next((v for v in params.get("options", []) if v["kind"] == kind), None)
                         outcome = {"outcome": "selected", "optionId": option["optionId"]} if option else {"outcome": "cancelled"}

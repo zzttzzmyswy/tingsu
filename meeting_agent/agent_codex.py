@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from .agent_materials import AgentCancelled, AgentError
 from .agent_options import codex_catalog
 from .local_cli import LocalCLI
 from .runtime import app_directory
-from .agent_tools import CODEX_GUIDANCE, CODEX_OUTPUT, execute
+from .agent_tools import LOCAL_CODEX_GUIDANCE, CODEX_OUTPUT, execute
 
 
 def _visible_prefix(raw):
@@ -26,10 +27,14 @@ def _visible_prefix(raw):
 
 
 class CodexBackend:
-    def __init__(self, model, executable="", effort="", speed=""):
+    def __init__(self, model, executable="", effort="", speed="", workspace=None):
         self.model = model
         self.effort, self.speed = effort, speed
         self.cli = LocalCLI("codex", executable)
+        self.workspace = Path(workspace).resolve() if workspace is not None else None
+        # The Windows restricted-token sandbox supports read-only mode; scoped
+        # read roots need the elevated sandbox, which is detected at connect time.
+        self.scoped_reads = self.workspace is not None and os.name != "nt"
         self.proc = None
         self.reader = None
         self.pending = {}
@@ -41,23 +46,28 @@ class CodexBackend:
     async def connect(self):
         if self.proc and self.proc.returncode is None:
             return
-        root = app_directory("data")
-        workspace = root / "codex-workspace"
+        workspace = self.workspace or app_directory("data") / "codex-workspace"
         workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.cwd = str(workspace.resolve())
         # stdio is the default, including versions predating the --stdio alias.
         cmd = ["app-server", "-c", 'web_search="disabled"']
-        for feature in (
+        local_tools = (
             "shell_tool",
             "unified_exec",
+            "view_image",
+        )
+        for feature in (
             "apps",
             "plugins",
             "computer_use",
             "hooks",
             "image_generation",
-            "view_image",
         ):
             cmd += ["-c", f"features.{feature}=false"]
+        for feature in local_tools:
+            cmd += ["-c", f"features.{feature}={'true' if self.workspace else 'false'}"]
+        if self.workspace:
+            cmd += ["-c", 'shell_environment_policy.inherit="core"']
         self.proc = await self.cli.spawn(
             *cmd,
             cwd=self.cwd,
@@ -71,7 +81,7 @@ class CodexBackend:
             await self.rpc(
                 "initialize",
                 {
-                    "clientInfo": {"name": "tingsu", "version": "1.3.0"},
+                    "clientInfo": {"name": "tingsu", "version": "1.4.0"},
                     "capabilities": {"experimentalApi": True},
                 },
             )
@@ -83,6 +93,15 @@ class CodexBackend:
             self.tool_config = {
                 "mcp_servers": {name: {"enabled": False} for name in (config.get("mcp_servers") or {})}
             }
+            if self.workspace and os.name == "nt":
+                self.scoped_reads = (config.get("windows") or {}).get("sandbox") == "elevated"
+            if self.scoped_reads:
+                self.tool_config.update(default_permissions="tingsu_files", permissions={
+                    "tingsu_files": {
+                        "filesystem": {":minimal": "read", ":workspace_roots": "read"},
+                        "network": {"enabled": False},
+                    }
+                })
         except BaseException:
             await self.close()
             raise
@@ -165,12 +184,15 @@ class CodexBackend:
     async def open_session(self, session_id, title):
         params = {
             "cwd": self.cwd,
-            "sandbox": "read-only",
             "approvalPolicy": "never",
-            "runtimeWorkspaceRoots": [],
-            "baseInstructions": CODEX_GUIDANCE,
+            "runtimeWorkspaceRoots": [self.cwd] if self.workspace else [],
+            "baseInstructions": LOCAL_CODEX_GUIDANCE,
             "config": self.tool_config,
         }
+        if self.scoped_reads:
+            params["permissions"] = "tingsu_files"
+        else:
+            params["sandbox"] = "read-only"
         if self.model:
             params["model"] = self.model
         if session_id:
@@ -178,15 +200,19 @@ class CodexBackend:
                 "thread/resume", {**params, "threadId": session_id, "excludeTurns": True}
             )
         else:
-            result = await self.rpc(
-                "thread/start", {**params, "environments": [], "selectedCapabilityRoots": []}
-            )
+            result = await self.rpc("thread/start", {**params, **self._environment(), "selectedCapabilityRoots": []})
         thread_id = result["thread"]["id"]
         if not session_id and title:
             # Some CLI versions materialize a thread only after the first turn.
             with contextlib.suppress(AgentError):
                 await self.rpc("thread/name/set", {"threadId": thread_id, "name": title[:120]})
         return thread_id
+
+    def _environment(self):
+        if self.workspace:
+            return {"environments": [{"environmentId": "local", "cwd": self.cwd,
+                                      "runtimeWorkspaceRoots": [self.cwd]}]}
+        return {"environments": []}
 
     async def _turn(self, session_id, inputs, on_delta):
         self.queue = asyncio.Queue()
@@ -197,11 +223,16 @@ class CodexBackend:
                 "threadId": session_id,
                 "input": inputs,
                 "outputSchema": CODEX_OUTPUT,
-                "environments": [],
-                "runtimeWorkspaceRoots": [],
+                **self._environment(),
+                "runtimeWorkspaceRoots": [self.cwd] if self.workspace else [],
                 "approvalPolicy": "never",
-                "sandboxPolicy": {"type": "readOnly", "networkAccess": False},
             }
+            if self.workspace:
+                params["cwd"] = self.cwd
+            if self.scoped_reads:
+                params["permissions"] = "tingsu_files"
+            else:
+                params["sandboxPolicy"] = {"type": "readOnly", "networkAccess": False}
             if self.model:
                 params["model"] = self.model
             if self.effort:

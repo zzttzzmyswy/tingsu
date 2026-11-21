@@ -89,6 +89,11 @@ def main():
         env=env,
         check=True,
     )
+    exe = args.dist.resolve() / "Tingsu-Windows-x86_64.exe"
+    size = exe.stat().st_size
+    if size >= 100_000_000:
+        raise SystemExit(f"Windows executable exceeds the release size budget: {size:,} bytes")
+    print(f"Verified single executable size: {size:,} bytes", flush=True)
 
 
 if __name__ == "__main__":

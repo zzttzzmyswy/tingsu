@@ -14,7 +14,7 @@ import urllib.request
 
 from PIL import Image, ImageGrab
 
-from desktop import Page, wait
+from desktop import debug_environment, Page, wait
 from openai_fixture import start as start_fixture
 
 
@@ -101,7 +101,7 @@ def verify(app, screenshot, directory, cleanup, *, retry=False, provider="silico
         "QTWEBENGINE_DISABLE_SANDBOX": "1",
         "QT_OPENGL": "software",
         "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --no-first-run",
-        "QTWEBENGINE_REMOTE_DEBUGGING": f"127.0.0.1:{port}",
+        **debug_environment(port),
         "TINGSU_APP_DIR": windows_path(directory),
         "OPENAI_API_KEY": "tingsu-local-acceptance",
         "OPENAI_BASE_URL": f"http://127.0.0.1:{fixture.server_port}/v1",

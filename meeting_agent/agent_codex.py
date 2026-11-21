@@ -14,10 +14,10 @@ from .runtime import app_directory
 from .agent_tools import LOCAL_CODEX_GUIDANCE, CODEX_OUTPUT, execute
 
 _WINDOWS_PATH_GUIDANCE = """
-Windows PowerShell 命令行可能把中文等字符转换为问号。附件清单含 path_utf8_base64 时，
-请用纯 ASCII 命令在 PowerShell 内得到原文件路径：
-$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('这里替换为清单中的编码'))
-随后可用 -LiteralPath $p 读取，或把 $p 传给适合这个文件的分析工具。这个编码只代表路径。"""
+Windows 的 PowerShell 有时会从自身安装目录启动；使用 exec_command 时显式设置 workdir 为输入的
+workspace，读取附件优先使用清单中的 absolute_path。若有 absolute_path_utf16，可在受限 PowerShell 中用
+纯 ASCII 命令 $p=-join [char[]](CODES) 还原绝对路径，CODES 替换成绝对路径码元用逗号连接的十进制数。
+随后使用 -LiteralPath $p 或将 $p 传给合适的分析工具。附件保留原文件名。"""
 
 
 def _visible_prefix(raw):

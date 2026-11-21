@@ -144,6 +144,17 @@ jobs:
         if: matrix.suite != 'accessibility'
         run: python -m pip install websocket-client==1.8.0 pillow==11.3.0
 
+      - name: Check the system Codex file tools against the source
+        if: matrix.suite == 'codex'
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:TINGSU_TEST_CODEX = Join-Path $env:RUNNER_TEMP 'System agents/codex.exe'
+          python -m unittest discover -s tests -p test_codex_workspace.py -v
+
       - name: Create and reopen a meeting with Windows UI Automation
         if: matrix.suite == 'accessibility'
         shell: pwsh

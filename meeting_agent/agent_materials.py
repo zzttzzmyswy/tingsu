@@ -219,6 +219,9 @@ def make_inputs(provider, text, attachments, context, *, frame=None, workspace=N
     responses = provider == "openai"
     text_type = "input_text" if responses else "text"
     request = {"request": text, "meeting_context": context}
+    windows_codex = workspace and provider == "codex" and os.name == "nt"
+    if windows_codex:
+        request["workspace"] = str(workspace)
     if attachments:
         manifest = []
         for material in attachments:
@@ -226,8 +229,14 @@ def make_inputs(provider, text, attachments, context, *, frame=None, workspace=N
             if workspace:
                 relative = material.path.relative_to(workspace).as_posix()
                 info["path"] = relative
-                if provider == "codex" and os.name == "nt" and not relative.isascii():
-                    info["path_utf8_base64"] = base64.b64encode(relative.encode("utf-8")).decode("ascii")
+                if windows_codex:
+                    absolute = str(material.path)
+                    info["absolute_path"] = absolute
+                    if not absolute.isascii():
+                        encoded = absolute.encode("utf-16-le")
+                        info["absolute_path_utf16"] = [
+                            int.from_bytes(encoded[i:i + 2], "little") for i in range(0, len(encoded), 2)
+                        ]
             manifest.append(info)
         request["attachments"] = manifest
     inputs = [{"type": text_type, "text": json.dumps(request, ensure_ascii=False)}]

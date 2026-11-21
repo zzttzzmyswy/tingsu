@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from e2e.codex_file_fixture import WorkspaceFixture
 from meeting_agent.agent_codex import CodexBackend
+from meeting_agent.agent_materials import make_inputs, Material
 
 
 @unittest.skipUnless(os.environ.get("TINGSU_TEST_CODEX"), "set TINGSU_TEST_CODEX to test the system CLI")
@@ -30,6 +31,7 @@ class CodexWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             (home / "auth.json").write_text(json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": "tingsu-local-acceptance"}))
             with ThreadingHTTPServer(("127.0.0.1", 0), WorkspaceFixture) as service:
                 service.platform = "windows" if os.name == "nt" else "unix"
+                service.filename = material.name
                 service.reads, service.waiting_result, service.marker = 0, False, marker
                 (home / "config.toml").write_text(
                     'model_provider="local_fixture"\n[model_providers.local_fixture]\nname="Test"\n'
@@ -43,12 +45,14 @@ class CodexWorkspaceTests(unittest.IsolatedAsyncioTestCase):
                         try:
                             await client.connect()
                             sid = await client.open_session(saved, "Reading attachments")
-                            request = {"request": "Read the original file and return its last value"}
+                            attachments = []
                             if turn == 1:
                                 saved = sid
-                                request["attachments"] = [{"path": material.relative_to(cwd).as_posix()}]
+                                attachments = [Material(material, "test", material.name, material.stat().st_size)]
                             self.assertEqual(sid, saved)
-                            text = await client.send(sid, [{"type": "text", "text": json.dumps(request)}], lambda _: None, None)
+                            inputs = make_inputs("codex", "Read the original file and return its last value",
+                                                 attachments, "", workspace=cwd)
+                            text = await client.send(sid, inputs, lambda _: None, None)
                             self.assertEqual(text, marker)
                         finally:
                             await client.close()

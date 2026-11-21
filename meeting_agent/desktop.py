@@ -100,7 +100,8 @@ class DesktopHost:
                 self.bridge.shutdown()
             self.process.stdin.close()
             try:
-                self.process.wait(timeout=4)
+                # WebView2 can still be flushing its browser profile after the HWND closes.
+                self.process.wait(timeout=25 if os.name == "nt" else 4)
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()

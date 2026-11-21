@@ -6,9 +6,13 @@
 
 - Linux AppImage 在 X11 和原生 Wayland 两个桌面连接外部 Codex。通过图形连接面板读取模型列表，指定模型、思考等级和速率，验证真实 CLI 发给回环端点的请求字段，并在应用重启后恢复原会话及参数。在线 Codex 另行完成了会议转写后的主动回复。两个平台包均已检查归档，Codex、Claude Code 和 Harness 由用户安装。[Codex 成品测试](../tests/e2e/external_codex.py)
 - X11 图形界面通过外部 Claude Code 2.0.41、2.1.319 和 DeepSeek Harness 从超过 16 万字符的材料末尾读出合成编号并创建便签，然后重启应用、恢复会话。这三组使用真实 CLI 与本地模型端点。在线 Codex 也从长文末尾读出编号，原文件删除后成功再次读取。材料层另测了 26 MiB 二进制、跨页中文、Office 文档及跨会议隔离。[图形测试](../tests/e2e/local_agents.py) · [材料回归](../tests/test_materials.py)
-- Wayland 的 XWayland 选择器从真实腾讯会议客户端登录窗口取得有效画面，另用可控窗口验证颜色更新和窗口关闭。原生 Wayland 门户通过逐像素刷新、采集进程被强制终止后重新选窗，并验证 Claude 读取共享画面、更新便签、重启后恢复会话。本次腾讯会议取帧覆盖登录界面，会议进行中的远端视频仍需实机验证。[XWayland 测试](../tests/e2e/xwayland_capture.py) · [原生 Wayland 测试](../tests/e2e/wayland_window.py)
+- Wayland 的 XWayland 选择器从真实腾讯会议客户端登录窗口取得有效画面，另用可控窗口验证颜色更新和窗口关闭。原生 Wayland 门户通过逐像素刷新、采集进程被强制终止后重新选窗，并验证 Claude 读取共享画面、更新便签、重启后恢复会话。本次腾讯会议取帧覆盖登录界面，会议进行中的远端视频仍需实机验证。在 Arch 隔离桌面直接从源码运行时，系统 PipeWire 1.6.11 和 xdg-desktop-portal-wlr 0.8.4 的组合仍出现过门户帧错误；同桌面的发行 AppImage 已通过取帧和恢复测试。[XWayland 测试](../tests/e2e/xwayland_capture.py) · [原生 Wayland 测试](../tests/e2e/wayland_window.py)
 - Linux 的两个单应用播放流在 PipeWire、PulseAudio 下分别得到隔离，ALSA 虚拟麦克风完成转写。录屏从第 5 分钟起点产生了两个发言人的带时间戳记录。Sophnet、SiliconFlow 在线转写以及停止、重试、导出、回复排队和恢复均经过 GUI 回归。[单流隔离](../tests/e2e/linux_streams.py) · [GUI 主流程](../tests/e2e/desktop.py)
 - 实际使用 v1.2.0 AppImage 创建四场主题会议、便签和会话后，v1.3.0 AppImage 在同一测试配置中恢复原有数据。第五场自动续接、提醒首场问题，AI 更新便签后再次重启仍保留完成状态。两个桌面还验证了双主题各五场的隔离。同一轮 57 项单元和集成测试通过。[主题看板测试](../tests/e2e/topic_board.py)
+
+Windows x64 成品在隔离的 Wine 桌面复测。直接选择原生 `codex.exe`，以及手动选择官方 npm 安装的 `codex.cmd`、系统 PATH 缺少 Node 的场景均通过。Claude Code 与 DeepSeek Harness 经本地测试模型读取长附件、建立便签并恢复会话。用 v1.2.0 EXE 写入两个独立测试配置后仅替换为 v1.3.0，验证了升级前已共享和升级后才提升到主题看板的两种便签都能提醒并续接原会话。另通过 Windows 专项的 Program Files 查找测试。[外部 Codex](../tests/e2e/external_codex.py) · [Windows 入口和环境测试](../tests/test_local_cli.py)
+
+在 GitHub 原生 Windows Server 2025 上，工作流下载并校验同一份待发布的单文件 EXE，启动工作台，通过 GUI 连接另外安装的官方 Codex 0.171.0。第一轮收到回环模型回复，正常关闭应用，重新启动后恢复相同的会话 ID 并收到第二轮回复。[原生 Windows 运行记录](https://github.com/zzttzzmyswy/tingsu/actions/runs/44882024703)
 
 ## v1.2.0 主题共享看板
 

@@ -19,6 +19,7 @@ DATA = app_directory("data")
 CONFIG = app_directory("config")
 CACHE = app_directory("cache")
 KINDS = {"question": "待解问题", "task": "待办事项", "idea": "灵感想法", "decision": "会议决策"}
+TOPIC_STATUSES = ("open", "in_progress", "done")
 
 
 def stamp():
@@ -138,6 +139,16 @@ class Store:
           CREATE TABLE IF NOT EXISTS notes (
             id TEXT PRIMARY KEY, meeting TEXT REFERENCES meetings(id), kind TEXT NOT NULL, title TEXT NOT NULL,
             body TEXT NOT NULL, author TEXT NOT NULL, created TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS topic_notes (
+            id TEXT PRIMARY KEY, topic TEXT NOT NULL REFERENCES topics(id), kind TEXT NOT NULL,
+            title TEXT NOT NULL, body TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('open','in_progress','done')),
+            source_meeting TEXT NOT NULL REFERENCES meetings(id), source_note TEXT UNIQUE REFERENCES notes(id)
+              ON DELETE SET NULL,
+            updated_meeting TEXT NOT NULL REFERENCES meetings(id), author TEXT NOT NULL, updated_by TEXT NOT NULL,
+            created TEXT NOT NULL, updated TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
+          CREATE INDEX IF NOT EXISTS topic_notes_topic ON topic_notes(topic,status);
+          CREATE TABLE IF NOT EXISTS topic_reminders (meeting TEXT PRIMARY KEY REFERENCES meetings(id));
           CREATE TABLE IF NOT EXISTS jobs (
             path TEXT PRIMARY KEY, meeting TEXT REFERENCES meetings(id), start REAL, end REAL);
           CREATE TABLE IF NOT EXISTS levels (
@@ -288,6 +299,7 @@ class Store:
                 speakers=self.rows("SELECT speaker,sum(max(0,end-at)) seconds,min(seq) first FROM events "
                                    "WHERE meeting=? AND kind='speech' GROUP BY speaker ORDER BY first", (mid,)),
                 levels=self.levels(mid, meeting["origin"], meeting["duration"]), notes=self.notes(mid),
+                topicNotes=self.topic_notes(mid),
                 pending=self.pending_count(mid), meetingSessions=self.agent_sessions(mid),
             )
 
@@ -313,6 +325,8 @@ class Store:
                         "WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 2", (entry["id"],)
                     )
                 context.update({"主题": meeting["topic_name"], "本场会议ID": mid, "往次会议": previous})
+                context["主题共享便签"] = self.rows("SELECT " + self._BOARD_PREVIEW + self._BOARD_FROM +
+                                                  " ORDER BY " + self._BOARD_ORDER + " LIMIT 20", (mid,))
             return context
 
     def check_agent_session(self, mid, provider, session):
@@ -449,6 +463,127 @@ class Store:
     def notes(self, mid):
         return self.rows("SELECT * FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC", (mid,))
 
+    _BOARD_FROM = (" FROM topic_notes n JOIN meetings current ON current.topic_id=n.topic "
+                   "JOIN meetings source ON source.id=n.source_meeting "
+                   "JOIN meetings edited ON edited.id=n.updated_meeting WHERE current.id=?")
+    _BOARD_FIELDS = "n.*,source.title AS source_title,edited.title AS updated_title"
+    _BOARD_PREVIEW = ("n.id,n.kind,n.title,substr(n.body,1,240) AS body,n.status,n.version,"
+                      "n.source_meeting,source.title AS source_title")
+    _BOARD_ORDER = "(n.status='done'),n.rowid DESC"
+    _FOLLOWUP_WHERE = (" AND n.kind IN ('question','task') AND n.status<>'done' "
+                       "AND source.rowid<current.rowid AND NOT EXISTS "
+                       "(SELECT 1 FROM topic_reminders r WHERE r.meeting=current.id)")
+
+    def topic_notes(self, mid):
+        return self.rows("SELECT " + self._BOARD_FIELDS + self._BOARD_FROM +
+                         " ORDER BY " + self._BOARD_ORDER, (mid,))
+
+    def pending_topic_followups(self, mid):
+        """Return a bounded opening brief, restricted to unfinished questions and tasks from earlier meetings."""
+        return self.rows("SELECT " + self._BOARD_PREVIEW + self._BOARD_FROM + self._FOLLOWUP_WHERE +
+                         " ORDER BY n.rowid LIMIT 12", (mid,))
+
+    def save_topic_reminder(self, mid, at, end, text, expected):
+        """Commit a visible reminder and its once-per-meeting receipt together."""
+        if not text.strip():
+            return False
+        with self.lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            current = [(note["id"], note["version"]) for note in self.pending_topic_followups(mid)]
+            if not current or current != list(expected):
+                return False
+            self.db.execute("INSERT INTO topic_reminders(meeting) VALUES(?)", (mid,))
+            self.db.execute("INSERT INTO events(meeting,kind,at,end,speaker,text) VALUES(?,'assistant',?,?,?,?)",
+                            (mid, at, end, "听序 AI", text))
+            return True
+
+    def _require_topic(self, mid):
+        row = self.one("SELECT topic_id FROM meetings WHERE id=?", (mid,))
+        if not row or not row["topic_id"]:
+            raise ValueError("请先将本场会议归入主题")
+        return row["topic_id"]
+
+    def _insert_topic_note(self, mid, topic, values, status, author, source_note=None):
+        nid, now = uid(), stamp()
+        self.db.execute("INSERT INTO topic_notes(id,topic,kind,title,body,status,source_meeting,source_note,"
+                        "updated_meeting,author,updated_by,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (nid, topic, *values, status, mid, source_note, mid, author, author, now, now))
+        return nid
+
+    def _topic_note_by_id(self, mid, nid):
+        return self.one("SELECT " + self._BOARD_FIELDS + self._BOARD_FROM + " AND n.id=?", (mid, nid))
+
+    def share_note(self, mid, note_id, author="我"):
+        """A meeting note and its shared copy can be edited independently after publication."""
+        with self.lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            topic = self._require_topic(mid)
+            local = self.one("SELECT kind,title,body FROM notes WHERE meeting=? AND id=?", (mid, note_id))
+            if not local:
+                raise ValueError("本场会议中找不到这条便签")
+            existing = self.one("SELECT id FROM topic_notes WHERE topic=? AND source_note=?", (topic, note_id))
+            if existing:
+                return self._topic_note_by_id(mid, existing["id"])
+            nid = self._insert_topic_note(mid, topic, (local["kind"], local["title"], local["body"]),
+                                          "open", author, source_note=note_id)
+            return self._topic_note_by_id(mid, nid)
+
+    def _list_topic_notes(self, mid, args):
+        query, status = str(args.get("query", "")).strip()[:500], args.get("status", "all")
+        offset = max(0, int(args.get("offset", 0)))
+        limit = max(1, min(50, int(args.get("limit", 20))))
+        where, values = self._BOARD_FROM, [mid]
+        if status != "all":
+            if status not in TOPIC_STATUSES:
+                raise ValueError("未知的主题便签状态")
+            where += " AND n.status=?"
+            values.append(status)
+        if query:
+            where += " AND instr(lower(n.title||' '||n.body),lower(?))>0"
+            values.append(query)
+        with self.lock:
+            self._require_topic(mid)
+            return self._history_page(self._BOARD_FIELDS, where, values, self._BOARD_ORDER, offset, limit)
+
+    def _write_topic_note(self, mid, name, args, author):
+        status = args.get("status", "open" if name == "create_topic_note" else None)
+        if name != "delete_topic_note" and status not in TOPIC_STATUSES:
+            raise ValueError("未知的主题便签状态")
+        with self.lock, self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            topic = self._require_topic(mid)
+            if name == "create_topic_note":
+                nid = self._insert_topic_note(mid, topic, self._note_values(args), status, author)
+                return self._topic_note_by_id(mid, nid)
+
+            nid = args.get("id", "")
+            note = self._topic_note_by_id(mid, nid)
+            if not note:
+                raise ValueError("当前主题找不到这条便签")
+            version = args.get("version")
+            if type(version) is not int or version != note["version"]:
+                raise ValueError("主题便签已更新，请重新读取后再修改")
+            if name == "delete_topic_note":
+                self.db.execute("DELETE FROM topic_notes WHERE id=? AND topic=?", (nid, topic))
+                return {"deleted": True}
+            content = (note["kind"], note["title"], note["body"])
+            values = self._note_values(args) if name == "update_topic_note" else content
+            if values == content and status == note["status"]:
+                return note
+            self.db.execute("UPDATE topic_notes SET kind=?, title=?, body=?, status=?, updated_meeting=?, "
+                            "updated_by=?, updated=?, version=version+1 WHERE id=? AND topic=?",
+                            (*values, status, mid, author, stamp(), nid, topic))
+            return self._topic_note_by_id(mid, nid)
+
+    @staticmethod
+    def _note_values(args):
+        kind = args.get("kind", "idea")
+        title = str(args.get("title", "")).strip()[:160]
+        body = str(args.get("body", "")).strip()[:16000]
+        if kind not in KINDS or not title:
+            raise ValueError("请填写便签标题并选择类型")
+        return kind, title, body
+
     # A UUID supplied by a provider never grants access on its own. Both reads use
     # the invoking meeting's membership and insertion order from the database.
     _PRIOR_MEETINGS = ("FROM meetings m JOIN meetings current ON current.topic_id=m.topic_id "
@@ -495,6 +630,12 @@ class Store:
             return {"meeting": previous, **self._history_page(fields, where, (target, query), order, offset, limit)}
 
     def tool(self, mid, name, args, author="AI"):
+        if name == "list_topic_notes":
+            return self._list_topic_notes(mid, args)
+        if name == "share_note_to_topic":
+            return self.share_note(mid, args["id"], author)
+        if name in ("create_topic_note", "update_topic_note", "set_topic_note_status", "delete_topic_note"):
+            return self._write_topic_note(mid, name, args, author)
         if name in ("list_topic_meetings", "read_topic_history"):
             return self._topic_history(mid, name, args)
         if name == "read_transcript":
@@ -516,11 +657,7 @@ class Store:
             return {"deleted": True}
         if name not in ("create_note", "update_note"):
             raise ValueError("无法识别的会议操作")
-        kind = args.get("kind", "idea")
-        title = str(args.get("title", "")).strip()[:160]
-        body = str(args.get("body", "")).strip()[:16000]
-        if kind not in KINDS or not title:
-            raise ValueError("请填写便签标题并选择类型")
+        kind, title, body = self._note_values(args)
         nid = uid() if name == "create_note" else str(args.get("id", ""))
         if name == "create_note":
             self.write(

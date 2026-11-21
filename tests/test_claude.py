@@ -57,6 +57,8 @@ listed = mcp('tools/list',{})['tools']
 assert set(t['name'] for t in listed) == {
     'list_notes', 'read_transcript', 'create_note', 'update_note', 'delete_note',
     'list_topic_meetings', 'read_topic_history',
+    'list_topic_notes', 'create_topic_note', 'update_topic_note', 'set_topic_note_status',
+    'share_note_to_topic', 'delete_topic_note',
 }
 result = mcp('tools/call',{'name':'list_notes','arguments':{}})
 assert json.loads(result['content'][0]['text']) == {'result':['marker']}

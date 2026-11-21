@@ -77,7 +77,7 @@ class CodexBackend:
             await self.rpc(
                 "initialize",
                 {
-                    "clientInfo": {"name": "tingsu", "version": "1.1.0"},
+                    "clientInfo": {"name": "tingsu", "version": "1.2.0"},
                     "capabilities": {"experimentalApi": True},
                 },
             )

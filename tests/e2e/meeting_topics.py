@@ -157,10 +157,10 @@ def scenario(launch, model):
         print("PASS history navigation, topic search, explicit recovery and unaffected other topic", flush=True)
 
 
-def run(app, wine, wayland):
+def run(app, wine, wayland, *, fixture=TopicModel, exercise=scenario):
     with TemporaryDirectory(prefix="tingsu-topics-") as tmp, ExitStack() as cleanup:
         root = Path(tmp)
-        model = ThreadingHTTPServer(("127.0.0.1", 0), TopicModel)
+        model = ThreadingHTTPServer(("127.0.0.1", 0), fixture)
         model.names = {}
         model.meetings = {topic: [] for topic in TOPICS}
         model.unavailable = set()
@@ -207,7 +207,7 @@ def run(app, wine, wayland):
                     if proc.poll() is None:
                         os.killpg(proc.pid, signal.SIGTERM)
                         proc.wait(timeout=15)
-        scenario(launch, model)
+        exercise(launch, model)
 
 
 if __name__ == "__main__":

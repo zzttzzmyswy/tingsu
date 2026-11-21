@@ -403,6 +403,15 @@ class Bridge(QObject):
         self.event.emit("note-saved", "")
         self.update()
 
+    def cmd_topic_note(self, a):
+        if a.get("meeting") != self.mid:
+            raise ValueError("会议已切换，请重新打开主题看板。")
+        op = {"add": "create_topic_note", "edit": "update_topic_note", "delete": "delete_topic_note",
+              "status": "set_topic_note_status", "share": "share_note_to_topic"}[a["op"]]
+        self.store.tool(self.mid, op, a, "我")
+        self.publish()
+        self.event.emit("note-saved", "")
+
     def cmd_export(self, a):
         title = self.current()["title"]
         name = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)

@@ -2,7 +2,7 @@
 
 const matchPageSize = 60;
 let matchRequest = 0, matchTimer, matchKey = "", matchOffset = 0, matchPage = null;
-let jumpSeq = null, noteForComposer = "", dialogOpener = null;
+let jumpSeq = null, dialogOpener = null;
 
 function findingRecords() {
   return !$("#record-tools").hidden && Boolean($("#record-query").value.trim() || $("#speaker-filter").value);

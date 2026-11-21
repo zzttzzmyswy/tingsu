@@ -8,14 +8,20 @@ GUIDANCE = """你是听序的会议助手。用与用户相同的语言给出简
 可以按任务阅读当前会议的历史转写和看板，并维护持久便签。修改与删除前先检查已有便签，避免重复创建。
 主题会议可以沿用同一个 AI 会话。每次以 meeting_context 确认当前场次，区分本场讨论和往次记录。
 需要回顾时可列出同主题往次会议，按场次分页读取转写、便签或对话。引用往次发言时说明场次和时间。
-只在当前会议创建、修改或删除便签。
+本场便签用于本次讨论；同一主题中需要跨场跟进的问题和待办放入主题共享看板。可以将已有的本场便签分享到主题。
+修改共享便签前读取最新卡片，使用返回的 version。open 表示未处理，in_progress 表示进行中，done 表示已完成。
+有明确解决依据或用户确认时更新原卡片的状态，保留卡片和来源。需要追问时指出事项及来源场次。
 不要虚构工具成功，只向用户展示简短结论和确有帮助的理由。仅使用本次提供的会议工具。不要访问本地目录或外部服务。"""
 
 STR = {"type": "string"}
 NOTE_KIND = {"type": "string", "enum": ["question", "task", "idea", "decision"]}
 NOTE = {"kind": NOTE_KIND, "title": STR, "body": STR}
+STATUSES = ["open", "in_progress", "done"]
+STATUS = {"type": "string", "enum": STATUSES}
+CARD_REF = {"id": STR, "version": {"type": "integer"}}
 PAGE = {"query": STR, "offset": {"type": "integer"}, "limit": {"type": "integer"}}
-PAGE_LIMITS = {"read_transcript": 100, "list_topic_meetings": 50, "read_topic_history": 50}
+PAGE_LIMITS = {"read_transcript": 100, "list_topic_meetings": 50, "read_topic_history": 50,
+               "list_topic_notes": 50}
 TOOLS = {
     "read_transcript": (
         "分页读取当前会议带时间戳的转写，可按关键词筛选。offset 从 0 开始。",
@@ -34,7 +40,18 @@ TOOLS = {
     "create_note": ("在当前会议新建便签。", NOTE),
     "update_note": ("用完整字段更新当前会议已有便签。", {"id": STR, **NOTE}),
     "delete_note": ("删除当前会议中指定 ID 的便签。", {"id": STR}),
+    "list_topic_notes": ("查询本主题的实时共享看板，可按状态或关键词分页；all 表示全部状态。",
+                         {"status": {"type": "string", "enum": ["all", *STATUSES]}, **PAGE}),
+    "create_topic_note": ("在当前主题创建跨会议共享便签，归入本场来源。", {**NOTE, "status": STATUS}),
+    "share_note_to_topic": ("将当前会议的一张本场便签复制到主题看板。重复分享会返回同一张共享卡片。",
+                            {"id": STR}),
+    "update_topic_note": ("用最新版本号更新主题卡片的文字、类别和状态。", {**CARD_REF, **NOTE, "status": STATUS}),
+    "set_topic_note_status": ("更新本主题卡片的状态，保留其标题、内容和来源。", {**CARD_REF, "status": STATUS}),
+    "delete_topic_note": ("根据最新版本号删除当前主题中的共享卡片。完成待办请使用状态工具。", CARD_REF),
 }
+
+WRITE_TOOLS = frozenset(("create_note", "update_note", "delete_note", "create_topic_note", "share_note_to_topic",
+                         "update_topic_note", "set_topic_note_status", "delete_topic_note"))
 
 
 def schema(fields):

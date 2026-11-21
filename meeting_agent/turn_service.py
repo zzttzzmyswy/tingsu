@@ -5,10 +5,13 @@ import json
 import threading
 
 from .agent_materials import AgentCancelled
+from .agent_tools import WRITE_TOOLS
 
 
 AUTO_INTERVAL = 28
 AUTO_PROMPT = "观察最新发言，有重要结论、待办或未决问题时更新便签，避免重复。用简短中文反馈。"
+FOLLOWUP_PROMPT = ("开场跟进。请根据上下文「本次开场跟进」用简短中文提醒与会者跟进往期问题和待办，说明来自哪场会议，"
+                   "必要时询问进展。本轮只做提醒。以当前提供的状态为准。")
 
 
 class TurnService:
@@ -32,6 +35,8 @@ class TurnService:
         self._active = None
         self._users = deque()
         self._auto_pending = False
+        self._check_followups = False
+        self._followups = ()
         self._last_auto = 0
         self._text = ""
         self._tools_lock = threading.Lock()
@@ -48,6 +53,8 @@ class TurnService:
         self.detach()
         self._meeting, self._client = meeting, client
         self._last_auto = duration - AUTO_INTERVAL
+        self._check_followups = self._automatic
+        self._start_next()
 
     def detach(self):
         self.cancel()
@@ -55,12 +62,14 @@ class TurnService:
         self._client = self._meeting = None
         self._users.clear()
         self._auto_pending = False
+        self._followups = ()
         if self._text:
             self._text = ""
             self.stream("")
 
     def cancel(self):
         self._auto_pending = False
+        self._check_followups = False
         if self._active is not None:
             # A tool mutation that already entered the store finishes before detach.
             with self._tools_lock:
@@ -68,9 +77,16 @@ class TurnService:
             self._client.cancel()
 
     def set_automatic(self, enabled):
+        if self._automatic == enabled:
+            return
         self._automatic = enabled
+        self._check_followups = enabled
         if not enabled:
             self._auto_pending = False
+            if self._followups:
+                self.cancel()
+        else:
+            self._start_next()
 
     def transcribed(self, meeting, end, has_text):
         if meeting != self._meeting or not self._automatic or not has_text:
@@ -98,21 +114,31 @@ class TurnService:
     def _start_next(self):
         if self.sending or self._client is None:
             return
+        self._followups = ()
+        items = []
         if self._users:
             prompt, attachments = self._users.popleft()
-        elif self._auto_pending:
-            self._auto_pending = False
-            prompt, attachments = AUTO_PROMPT, ()
         else:
-            return
+            items = self.store.pending_topic_followups(self._meeting) if self._check_followups else []
+            self._check_followups = False
+            attachments = ()
+            if items:
+                self._followups = tuple((item["id"], item["version"]) for item in items)
+                prompt = FOLLOWUP_PROMPT
+            elif self._auto_pending:
+                self._auto_pending = False
+                prompt = AUTO_PROMPT
+            else:
+                return
         mid, client = self._meeting, self._client
+        followups = self._followups
         at = self.position()
         token = self._active = threading.Event()
         self._text = ""
         self.stream("")
         self.changed()
         try:
-            get_frame = self.prepare_frame(mid, at)
+            get_frame = None if followups else self.prepare_frame(mid, at)
         except Exception as exc:
             self._finish(token, mid, at, "", exc)
             return
@@ -121,24 +147,29 @@ class TurnService:
             with self._tools_lock:
                 if token.is_set():
                     raise AgentCancelled("会议请求已结束")
+                if followups and name in WRITE_TOOLS:
+                    raise ValueError("开场提醒只读取看板，请在后续讨论中更新事项。")
                 result = self.store.tool(mid, name, args)
-            if name in ("create_note", "update_note", "delete_note"):
+            if name in WRITE_TOOLS:
                 self.post(self.changed)
             return result
 
         def delta(piece):
-            self.post(lambda: self._append(token, piece))
+            if not followups:
+                self.post(lambda: self._append(token, piece))
 
         def run():
             try:
-                context = json.dumps(self.store.agent_context(mid), ensure_ascii=False)
+                context = self.store.agent_context(mid)
+                if followups:
+                    context["本次开场跟进"] = items
                 files = list(attachments)
                 if get_frame and not token.is_set():
                     files.append(get_frame())
                 if token.is_set():
                     raise AgentCancelled("已停止请求")
                 reply = client.send(prompt, attachments=files, on_delta=delta, tool_handler=tool,
-                                    context=context, cancel_event=token)
+                                    context=json.dumps(context, ensure_ascii=False), cancel_event=token)
             except Exception as exc:
                 self.post(lambda e=exc: self._finish(token, mid, at, "", e))
             else:
@@ -168,11 +199,17 @@ class TurnService:
                 self.store.event(mid, "system", at, at, "系统", "AI 回复失败：" + detail[:700])
             if reply and reply.strip():
                 end = self.position()
-                self.store.event(mid, "assistant", end, end, "听序 AI", reply)
+                if self._followups:
+                    if not cancelled and not error:
+                        saved = self.store.save_topic_reminder(mid, at, end, reply, self._followups)
+                        self._check_followups = self._automatic and not saved
+                else:
+                    self.store.event(mid, "assistant", end, end, "听序 AI", reply)
         finally:
             if cancelled or error:
                 self._auto_pending = False
             self._text = ""
+            self._followups = ()
             self.stream("")
             self.changed()
             self._start_next()

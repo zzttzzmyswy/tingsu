@@ -86,6 +86,8 @@ class Fixture(BaseHTTPRequestHandler):
             tool = ("read_transcript", {"query": "", "limit": 8, "offset": 0})
         elif "tingsu-recall-topic" in last:
             tool = ("list_topic_meetings", {"query": "", "offset": 0, "limit": 10})
+        elif "tingsu-resolve-board" in last:
+            tool = ("set_topic_note_status", {**self.server.board_card, "status": "done"})
         events = [{"type": "message_start", "message": {"id": "msg_" + uuid4().hex, "type": "message", "role": "assistant",
                   "model": MODEL, "content": [], "usage": {"input_tokens": 12, "output_tokens": 0}}}]
         if tool:

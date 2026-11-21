@@ -12,6 +12,7 @@
     <script defer src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <script defer src="icons.js"></script>
     <script defer src="workspace.js"></script>
+    <script defer src="board.js"></script>
     <script defer src="app.js"></script>
   </head>
   <body>
@@ -154,9 +155,19 @@
                 </div>
                 <div class="panel-controls"><select id="note-filter" aria-label="按便签类型筛选">
                   <option value="">全部类型</option><option value="question">待解问题</option><option value="task">待办事项</option><option value="idea">灵感想法</option><option value="decision">会议决策</option>
-                </select><button class="add-note" data-action="note-new" title="新建便签">
+                </select><button class="add-note" data-action="note-new" aria-label="新建便签" title="新建便签">
                   <i data-icon="plus"></i>
                 </button></div>
+              </div>
+              <div class="board-tools" id="board-tools" hidden>
+                <div class="segmented" role="group" aria-label="便签范围">
+                  <button data-action="board-scope" data-id="meeting" aria-pressed="true">本场便签</button>
+                  <button data-action="board-scope" data-id="topic" aria-pressed="false">主题看板</button>
+                </div>
+                <select id="board-status" aria-label="筛选主题便签状态">
+                  <option value="pending">未完成</option><option value="all">全部状态</option>
+                  <option value="open">待跟进</option><option value="in_progress">进行中</option><option value="done">已完成</option>
+                </select>
               </div>
               <div class="note-scroll" id="notes"></div>
             </section>

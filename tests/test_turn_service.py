@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from meeting_agent.agent_materials import AgentCancelled
 from meeting_agent.storage import Store
-from meeting_agent.turn_service import AUTO_PROMPT, TurnService
+from meeting_agent.turn_service import AUTO_PROMPT, FOLLOWUP_PROMPT, TurnService
 
 
 class ControlledClient:
@@ -63,6 +63,52 @@ class TurnServiceTests(unittest.TestCase):
     def next_call(self):
         self.pump_until(lambda: not self.client.calls.empty())
         return self.client.calls.get_nowait()
+
+    def test_opening_brief_waits_for_auto_and_rechecks_items_before_persisting(self):
+        first = self.store.create("第一次同步", topic_name="产品交付")
+        topic = self.store.meeting(first)["topic_id"]
+        fifth = self.store.create("稍后同步", topic_id=topic)
+        card = self.store.tool(first, "create_topic_note", dict(kind="task", title="回寄样机", body="", status="open"))
+        self.turns.set_automatic(False)
+        self.turns.bind(fifth, self.client, 0)
+        self.assertFalse(self.turns.sending)
+        self.turns.set_automatic(True)
+        brief = self.next_call()
+        self.assertEqual((brief["prompt"], brief["attachments"]), (FOLLOWUP_PROMPT, []))
+        self.assertEqual(json.loads(brief["context"])["本次开场跟进"][0]["id"], card["id"])
+        status = dict(id=card["id"], version=card["version"], status="done")
+        with self.assertRaises(ValueError):
+            brief["tool_handler"]("set_topic_note_status", status)
+        self.store.tool(fifth, "set_topic_note_status", status)
+        brief["on_delta"]("请回寄旧样机")
+        brief["result"]("请回寄旧样机")
+        self.pump_until(lambda: not self.turns.sending)
+        self.assertFalse(self.store.events(fifth))
+        self.assertNotIn("请回寄旧样机", self.streams)
+
+    def test_retry_opening_brief_after_cancel_and_only_persist_one_per_meeting(self):
+        topic_first = self.store.create("首次评审", topic_name="方案")
+        topic = self.store.meeting(topic_first)["topic_id"]
+        mid = self.store.create("第二次评审", topic_id=topic)
+        self.store.tool(topic_first, "create_topic_note", dict(kind="question", title="运费", body="", status="open"))
+        self.turns.bind(mid, self.client, 0)
+        cancelled = self.next_call()
+        self.turns.set_automatic(False)
+        self.assertTrue(cancelled["cancel_event"].is_set())
+        cancelled["result"]("晚到的回复")
+        self.pump_until(lambda: not self.turns.sending)
+        self.turns.set_automatic(True)
+        brief = self.next_call()
+        self.turns.submit("我补充一点", [])
+        brief["result"]("上次的运费问题有进展吗？")
+        question = self.next_call()
+        self.assertEqual(question["prompt"], "我补充一点")
+        question["result"]("请继续")
+        self.pump_until(lambda: not self.turns.sending)
+        self.turns.bind(mid, self.client, 0)
+        self.assertFalse(self.turns.sending)
+        self.assertEqual([row["text"] for row in self.store.events(mid) if row["kind"] == "assistant"],
+                         ["上次的运费问题有进展吗？", "请继续"])
 
     def test_user_fifo_precedes_coalesced_analysis_and_context_is_current(self):
         self.store.event(self.mid, "speech", 119, 120, "发言人 01", "本周发布")

@@ -23,7 +23,6 @@ let S,
   view = "workspace",
   filter = "all",
   modal = "",
-  noteId = "",
   liveText = "",
   savedFeed = "",
   previous = "",
@@ -82,13 +81,13 @@ function onState(raw) {
     previous = S.meeting.id;
     filter = "all";
     resetRecordSearch();
-    $("#note-filter").value = "";
+    resetBoard();
     jumpSeq = null;
-    noteForComposer = "";
     liveText = "";
     savedFeed = "";
   }
   render();
+  refreshNoteConflict();
   if (modal === "agent" && modalState !== [S.agent, S.session, S.loginLink].join("|")) agentDialog();
   if (modal === "screen") updateScreen();
   if (modal === "speakers") renderSpeakerStats();
@@ -306,43 +305,6 @@ function renderStream() {
   if (S.sending && wasNear && !findingRecords()) $("#feed-scroll").scrollTop = $("#feed-scroll").scrollHeight;
   syncLatestButton();
 }
-function renderNotes() {
-  const kind = $("#note-filter").value;
-  const notes = kind ? S.notes.filter((n) => n.kind === kind) : S.notes;
-  $("#note-count").textContent = kind ? notes.length + "/" + S.notes.length : S.notes.length;
-  const html = notes.length
-    ? notes
-        .map((n) => {
-          const [label, ic] = types[n.kind] || types.idea;
-          return (
-            '<button class="note ' +
-            esc(n.kind) +
-            '" data-action="note-edit" data-id="' +
-            esc(n.id) +
-            '"><div class="note-top"><span class="note-type">' +
-            icon(ic) +
-            label +
-            "</span>" +
-            icon("more", 15) +
-            "</div><h3>" +
-            esc(n.title) +
-            "</h3><p>" +
-            esc(n.body) +
-            '</p><span class="note-by">' +
-            icon(n.author === "我" ? "pencil" : n.author.includes("AI") ? "spark" : "pencil") +
-            esc(n.author) +
-            "</span></button>"
-          );
-        })
-        .join("")
-    : kind ? empty(types[kind][1], "暂无" + types[kind][0], "", btn("note-new", "新建便签", "plus")) : empty(
-        "board",
-        "留下值得跟进的事",
-        "你和 AI 都可以在这里整理问题、决策和待办。",
-        btn("note-new", "新建便签", "plus"),
-      );
-  updateButtonList($("#notes"), html, $('.board .add-note'));
-}
 function renderComposer() {
   $("#file-list").innerHTML = S.files
     .map(
@@ -540,27 +502,6 @@ function create(start) {
     cmd("new", { title, source, start, offset, ...topic });
   }
 }
-function noteDialog(n) {
-  noteId = n?.id || "";
-  noteForComposer = "";
-  dlg(
-    "note",
-    noteId ? "编辑便签" : "新建便签",
-    '<label class="field">类型<select id="note-kind">' +
-      Object.entries(types)
-        .map(([v, t]) => opt(v, t[0], v === (n?.kind || $("#note-filter").value || "question")))
-        .join("") +
-      '</select></label><label class="field">标题<input id="note-title" maxlength="160" value="' +
-      esc(n?.title || "") +
-      '" placeholder="需要记住什么？"></label><label class="field">内容<textarea id="note-body" maxlength="16000" placeholder="补充背景、负责人或下一步…">' +
-      esc(n?.body || "") +
-      '</textarea></label><div class="dialog-actions">' +
-      (noteId ? btn("note-delete", "删除", "trash", "danger left") + btn("note-follow", "保存并引用", "chat") : "") +
-      btn("close", "取消") +
-      btn("note-save", "保存便签", "check", "primary") +
-      "</div>",
-  );
-}
 function settings(tab = "asr", preferred = S.settings.agent) {
   settingsTab = tab;
   const s = S.settings;
@@ -606,7 +547,7 @@ function settings(tab = "asr", preferred = S.settings.agent) {
       ).join("") +
       '<label class="toggle-row"><input type="checkbox" id="auto" ' +
       (s.auto ? "checked" : "") +
-      '>连接后，AI 自动分析新增发言并整理便签</label><label class="toggle-row"><input type="checkbox" id="share" ' +
+      '>连接后，AI 自动分析新增发言，并在新场会议提醒主题看板上未解决的问题和待办</label><label class="toggle-row"><input type="checkbox" id="share" ' +
       (s.share_frames ? "checked" : "") +
       ">将当前共享画面或录屏帧随 AI 消息发送</label>";
   dlg(
@@ -932,42 +873,25 @@ function act(a, el) {
       else jumpTo(t);
       return;
     }
+    case "board-scope":
+      return switchBoard(id);
     case "note-new":
       return noteDialog();
     case "note-edit":
-      return noteDialog(S.notes.find((n) => n.id === id));
+      return noteDialog(boardNotes().find((n) => n.id === id));
+    case "note-status":
+      return changeTopicStatus(id);
     case "note-follow":
-    case "note-save": {
-      const title = $("#note-title").value.trim();
-      if (!title) {
-        $("#note-title").focus();
-        return;
-      }
-      noteForComposer = a === "note-follow"
-        ? "请跟进这张便签：「" + title + "」\n" + $("#note-body").value : "";
-      cmd("note", {
-        op: noteId ? "edit" : "add",
-        id: noteId,
-        title,
-        body: $("#note-body").value,
-        kind: $("#note-kind").value,
-      });
-      return;
-    }
+    case "note-save":
+      return saveBoardNote(a === "note-follow");
+    case "note-share":
+      return shareBoardNote();
+    case "note-reload":
+      return reloadBoardNote();
     case "note-delete":
-      return dlg(
-        "confirm-delete",
-        "删除这张便签？",
-        '<p class="body-copy">' +
-          esc(S.notes.find((n) => n.id === noteId)?.title) +
-          '</p><div class="dialog-actions">' +
-          btn("close", "取消") +
-          btn("note-confirm-delete", "删除便签", "trash", "danger") +
-          "</div>",
-      );
+      return confirmBoardDelete();
     case "note-confirm-delete":
-      cmd("note", { op: "delete", id: noteId });
-      return;
+      return removeBoardNote();
     case "settings":
       return settings();
     case "ai-settings":
@@ -1042,7 +966,7 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (e.target.id === "speaker-filter") changeMatchPage();
-  if (e.target.id === "note-filter") renderNotes();
+  if (e.target.id === "note-filter" || e.target.id === "board-status") renderNotes();
   if (e.target.id === "provider") asrFields();
   if (e.target.id === "connect-provider") providerHint();
   if (e.target.id === "ai-provider") showAgentFields();
@@ -1101,11 +1025,7 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
     if (name === "jump") jumpTo(Number(value));
     if (name === "settings-saved" && modal === "settings") close();
     if (name === "topic-saved" && modal === "join-topic") close();
-    if (name === "note-saved" && (modal === "note" || modal === "confirm-delete")) {
-      close();
-      if (noteForComposer) appendToComposer(noteForComposer);
-      noteForComposer = "";
-    }
+    if (name === "note-saved") finishBoardNote();
     if (name === "position" && S) {
       const e = $("#meta .mono");
       if (e) e.textContent = duration(Number(value) - S.meeting.origin, true);

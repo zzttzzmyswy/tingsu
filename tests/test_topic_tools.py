@@ -13,6 +13,7 @@ from meeting_agent.agent_codex import CodexBackend
 from meeting_agent.agent_deepseek import DeepSeekBackend
 from meeting_agent.agent_openai import OpenAIBackend
 from meeting_agent.agent_tools import CODEX_OUTPUT, OPENAI_TOOLS, execute
+from meeting_agent.storage import Store
 
 
 LIST = {"query": "", "offset": 0, "limit": 10}
@@ -124,6 +125,19 @@ class TopicToolTests(unittest.IsolatedAsyncioTestCase):
                 answer = await resumed.send(sid, [{"type": "text", "text": "tingsu-recall-topic"}],
                                             lambda _: None, self.history)
                 self.assertIn("预算 417", answer)
+                with patch("meeting_agent.storage.DATA", Path(tmp) / "board-db"):
+                    store = Store()
+                try:
+                    first = store.create("第一场", topic_name="共享测试")
+                    next_meeting = store.create("第二场", topic_id=store.meeting(first)["topic_id"])
+                    card = store.tool(first, "create_topic_note", dict(kind="task", title="确认预算", body=""))
+                    api.board_card = {key: card[key] for key in ("id", "version")}
+                    await resumed.send(sid, [{"type": "text", "text": "tingsu-resolve-board"}], lambda _: None,
+                                       lambda name, args: store.tool(next_meeting, name, args))
+                    updated, = store.topic_notes(first)
+                    self.assertEqual((updated["status"], updated["updated_meeting"]), ("done", next_meeting))
+                finally:
+                    store.db.close()
             finally:
                 await resumed.close()
         self.assertEqual(self.calls, [("list_topic_meetings", LIST), ("read_topic_history", READ)])

@@ -16,18 +16,18 @@ permissions:
   contents: read
 
 jobs:
-  windows:
+  fetch:
+    # GitHub requires push-level permission to read draft releases. This job only fetches
+    # release metadata/assets and hashes bytes. It never checks out or runs project code.
+    permissions:
+      contents: write
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+    outputs:
+      sha256: ${{ steps.verify.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
       - name: Download and verify the release executable
+        id: verify
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,7 +57,41 @@ jobs:
           $exe = Join-Path $target $app
           $actual = (Get-FileHash $exe -Algorithm SHA256).Hash
           if ($actual -ne $checksum[0].Matches[0].Groups[1].Value) { throw 'Release executable checksum mismatch' }
+          "sha256=$actual" >> $env:GITHUB_OUTPUT
           Write-Host "Verified $app for $($release.tag_name): $actual"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-windows-executable
+          path: ${{ runner.temp }}/verified release/Tingsu-Windows-x86_64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  windows:
+    needs: fetch
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-windows-executable
+          path: ${{ runner.temp }}/verified release
+      - name: Check the transferred executable
+        shell: pwsh
+        env:
+          EXPECTED_SHA256: ${{ needs.fetch.outputs.sha256 }}
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'verified release/Tingsu-Windows-x86_64.exe'
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $env:EXPECTED_SHA256) { throw 'Transferred executable checksum mismatch' }
 
       - name: Install the official external Codex CLI for this test
         shell: pwsh

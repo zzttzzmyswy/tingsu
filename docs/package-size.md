@@ -1,6 +1,6 @@
 # 单文件版的体积
 
-v1.3.0 改用系统安装的 Codex、Claude Code 和 DeepSeek Harness。下载 Linux AppImage 为 **294.01 MiB**（308,296,184 字节），Windows EXE 为 **245.77 MiB**（257,708,778 字节）。与 v1.2.0 比较，分别减少 **169.91 MiB（36.6%）** 和 **203.85 MiB（45.3%）**。两端继续随包提供 Qt WebEngine、Python 和音视频运行组件。数字按发布文件实际长度计算。[v1.3.0 单文件和校验清单](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.3.0)
+v1.3.0 改用系统安装的 Codex、Claude Code 和 DeepSeek Harness。下载 Linux AppImage 为 **294.01 MiB**（308,296,184 字节），Windows EXE 为 **245.77 MiB**（257,708,900 字节）。与 v1.2.0 比较，分别减少 **169.91 MiB（36.6%）** 和 **203.85 MiB（45.3%）**。两端继续随包提供 Qt WebEngine、Python 和音视频运行组件。数字按发布文件实际长度计算。[v1.3.0 单文件和校验清单](https://github.com/zzttzzmyswy/tingsu/releases/tag/v1.3.0)
 
 ## v1.2.0 体积基线
 

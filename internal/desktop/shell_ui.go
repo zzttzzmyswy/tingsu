@@ -30,7 +30,8 @@ func (u *workbench) menuBar(g C) D {
 	file := []menuItem{
 		{"new", "新建会议", "Ctrl+N", u.newMeeting},
 		{"import", "导入逐字稿…", "Ctrl+I", u.importTranscript},
-		{"export", "导出会议记录…", "", func() { u.cmd("export", nil) }},
+		{"export", "导出会议记录…", "", func() { u.exportForm("meeting") }},
+		{"board-export", "导出便签看板…", "", func() { u.exportForm("board") }},
 	}
 	meeting := []menuItem{
 		{"history", "打开已有会议…", "", func() { u.open("history") }},
@@ -312,7 +313,7 @@ func (u *workbench) rail(g C) D {
 							bg = paper
 						}
 						return b.Layout(g, func(g C) D {
-							return box(full(g), bg, 4, inset(8, col(3, u.oneLine(title, 14, ink), u.oneLine(label, 12, muted))))
+							return box(full(g), bg, 9, inset(10, col(4, u.oneLine(title, 14, ink), u.oneLine(label, 12, muted))))
 						})
 					})
 				}

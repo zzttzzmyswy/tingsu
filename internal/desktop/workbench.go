@@ -93,7 +93,8 @@ type workbench struct {
 	fields                           map[string]string
 	drafts                           map[string]string
 	note                             M
-	topicBoard                       bool
+	boardScope                       string
+	markdownRows                     map[string]markdownRow
 	boardKind, boardStatus, feedKind string
 	stream, frameURI                 string
 	frame                            paint.ImageOp
@@ -109,12 +110,12 @@ type workbench struct {
 	choiceTitle                      string
 }
 
-//go:embed fonts/TingsuSans.otf
+//go:embed fonts/TingsuSans.ttf
 var interfaceFont []byte
 
 func newWorkbench(send func(packet)) *workbench {
 	u := &workbench{window: new(app.Window), th: material.NewTheme(), send: send, wake: make(chan struct{}, 1),
-		railWidth: 210, boardWidth: 325, checks: map[string]*widget.Bool{}, custom: map[string]bool{}, state: M{}, buttons: map[string]*widget.Clickable{}, editors: map[string]*widget.Editor{}, selectable: map[string]*widget.Selectable{}, lists: map[string]*widget.List{}, fields: map[string]string{}, drafts: map[string]string{}, boardStatus: "pending"}
+		railWidth: 210, boardWidth: 325, checks: map[string]*widget.Bool{}, custom: map[string]bool{}, state: M{}, buttons: map[string]*widget.Clickable{}, editors: map[string]*widget.Editor{}, selectable: map[string]*widget.Selectable{}, lists: map[string]*widget.List{}, fields: map[string]string{}, drafts: map[string]string{}, markdownRows: map[string]markdownRow{}}
 	faces, err := opentype.ParseCollection(interfaceFont)
 	if err == nil {
 		u.th.Shaper = text.NewShaper(text.WithCollection(faces))
@@ -210,8 +211,9 @@ func (u *workbench) drain() {
 					u.feedKind = ""
 					u.records = recordView{}
 					u.boardKind = ""
-					u.boardStatus = "pending"
-					u.topicBoard = str(u.meeting()["topic_id"]) != ""
+					u.boardStatus = ""
+					u.boardScope = ""
+					u.markdownRows = map[string]markdownRow{}
 					u.position = 0
 					u.stream = ""
 					u.results = nil
@@ -446,7 +448,10 @@ func box(g C, c color.NRGBA, r unit.Dp, child W) D {
 }
 
 func control(g C, bg color.NRGBA, child W) D {
-	return widget.Border{Color: line, Width: 1}.Layout(g, func(g C) D { return box(g, bg, 0, child) })
+	return card(g, bg, 7, child)
+}
+func card(g C, bg color.NRGBA, radius unit.Dp, child W) D {
+	return widget.Border{Color: mix(paper, line, 60), Width: 1, CornerRadius: radius}.Layout(g, func(g C) D { return box(g, bg, radius, child) })
 }
 func full(g C) C { g.Constraints.Min.X = g.Constraints.Max.X; return g }
 func (u *workbench) field(id, hint string, multi, secret bool) W {

@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"unicode"
 )
 
 func (b *bridge) command(name string, a M) error {
@@ -174,22 +173,7 @@ func (b *bridge) command(name string, a M) error {
 		b.publish()
 		b.event("note-saved", str(a["editor"]))
 	case "export":
-		m := b.current()
-		title := strings.Map(func(r rune) rune {
-			if unicode.IsLetter(r) || unicode.IsNumber(r) || strings.ContainsRune(" -_", r) {
-				return r
-			}
-			return '_'
-		}, str(m["title"]))
-		b.dialog("save-file", "导出会议记录", M{"path": title + ".md", "filter": "*.md"}, func(v any) {
-			if target := str(v); target != "" {
-				if e := b.export(target, m); e != nil {
-					b.fail(e)
-				} else {
-					b.notice("会议记录已导出", "ok")
-				}
-			}
-		})
+		return b.startExport(a)
 	case "start":
 		return b.start()
 	case "stop":

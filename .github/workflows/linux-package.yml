@@ -1,0 +1,30 @@
+name: Build Linux AppImage
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools librsvg2-bin
+      - name: Build and verify release executable
+        run: |
+          packaging/linux/build.sh
+          cd dist
+          chmod +x Tingsu-Linux-x86_64.AppImage
+          ./Tingsu-Linux-x86_64.AppImage --appimage-extract >/dev/null
+          ./squashfs-root/AppRun --version
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tingsu-linux
+          path: dist/Tingsu-Linux-x86_64.AppImage
+          if-no-files-found: error
+          compression-level: 0

@@ -33,7 +33,7 @@ func (b *codex) initialize(ctx context.Context) error {
 		return e
 	}
 	b.w = w
-	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.3.1"}, "capabilities": M{"experimentalApi": true}}); e != nil {
+	if _, e = w.call(ctx, "initialize", M{"clientInfo": M{"name": "tingsu", "version": "2.4.0"}, "capabilities": M{"experimentalApi": true}}); e != nil {
 		return e
 	}
 	return w.write(M{"method": "initialized"})
@@ -156,7 +156,7 @@ func (b *codex) env() []M {
 func (b *codex) open(ctx context.Context, id, title string) (string, error) {
 	instructions := kit.Codex
 	if runtime.GOOS == "windows" {
-		instructions += " Windows 使用文件清单 absolute_path 并明确将 workdir 设置为 workspace。含非 ASCII 字符的路径可用 PowerShell $p=-join [char[]](CODES) 还原 absolute_path_utf16 后使用 -LiteralPath $p。"
+		instructions += " Windows 读取附件时用 workspace 作工作目录、用 absolute_path 定位文件。路径乱码时用 PowerShell 的 -join [char[]](CODES) 从 absolute_path_utf16 还原，再用 -LiteralPath 读取。"
 	}
 	m := M{"cwd": b.cfg.Workspace, "approvalPolicy": "never", "runtimeWorkspaceRoots": []string{b.cfg.Workspace}, "baseInstructions": instructions, "config": b.config}
 	if b.scoped {
@@ -354,8 +354,20 @@ func (b *codex) send(ctx context.Context, id string, in []M, delta func(string),
 			return strings.Join(parts, "\n"), nil
 		}
 		outs := []M{}
+		terminal := str(r["on_success"]) != "" && str(r["message"]) == ""
 		for _, a := range actions {
-			outs = append(outs, M{"name": a["name"], "output": invoke(t, str(a["name"]), a["arguments"], true, false)})
+			name := str(a["name"])
+			output := invoke(t, name, a["arguments"], true, false)
+			var receipt M
+			if json.Unmarshal([]byte(output), &receipt) != nil || receipt["result"] == nil || strings.HasPrefix(name, "read_") || strings.HasPrefix(name, "list_") {
+				terminal = false
+			}
+			outs = append(outs, M{"name": name, "output": json.RawMessage(output)})
+		}
+		if terminal {
+			message := str(r["on_success"])
+			delta(message)
+			return strings.Join(append(parts, message), "\n"), nil
 		}
 		in = []M{{"type": "text", "text": encode(M{"meeting_tool_results": outs})}}
 	}

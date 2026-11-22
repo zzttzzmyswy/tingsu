@@ -143,7 +143,7 @@ func (u *workbench) back() {
 }
 func (u *workbench) pane(g C, content W) D {
 	g.Constraints.Min = g.Constraints.Max
-	return box(g, paper, 0, inset(15, content))
+	return padding{Top: 8, Bottom: 8}.Wrap(func(g C) D { return box(g, paper, 14, inset(14, content)) })(g)
 }
 func (u *workbench) feed(g C) D {
 	return u.pane(g, func(g C) D {
@@ -194,11 +194,32 @@ func (u *workbench) eventRow(g C, e M) D {
 			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, ink, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("form/body").SetText(quote) }))))
 		}
 	}
-	content := []W{header, style.Layout}
-	if files := str(e["files"]); files != "" && files != "[]" {
-		content = append(content, u.text(files, 12, muted, false))
+	body := W(style.Layout)
+	if kind == "assistant" {
+		body = u.markdownBody(id, str(e["text"]), style.Layout)
+		sourceLabel := "原文"
+		if u.markdownRows[id].showSource {
+			sourceLabel = "排版"
+		}
+		header = func(g C) D {
+			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(stamp+"   "+who, 13, accentInk, true)), layout.Rigid(row(4, u.button("source/"+id, sourceLabel, false, func() {
+				r := u.markdownRows[id]
+				r.showSource = !r.showSource
+				u.markdownRows[id] = r
+			}), u.button("copy/"+id, "复制", false, func() { copyText(g, str(e["text"])) }))))
+		}
 	}
-	return layout.Inset{Top: 3, Bottom: 3, Right: 7}.Layout(g, func(g C) D { return box(full(g), paper, 0, inset(9, col(3, content...))) })
+	content := []W{header, body}
+	if files := attachmentNames(e); files != "" {
+		content = append(content, u.text("附件："+files, 12, muted, false))
+	}
+	bg := paper
+	if kind == "assistant" {
+		bg = mix(paper, selection, 9)
+	} else if kind == "user" {
+		bg = canvas
+	}
+	return layout.Inset{Top: 3, Bottom: 3, Right: 7}.Layout(g, func(g C) D { return box(full(g), bg, 12, inset(12, col(5, content...))) })
 }
 func (u *workbench) appendDraft(quote string) {
 	ed := u.edit("message")
@@ -233,34 +254,23 @@ func (u *workbench) composer(g C) D {
 }
 func (u *workbench) board(g C) D {
 	return u.pane(g, func(g C) D {
-		tab := []W{}
-		if str(u.meeting()["topic_id"]) != "" {
-			for _, v := range []choice{{"meeting", "本场便签"}, {"topic", "主题看板"}} {
-				tab = append(tab, u.button("scope"+v.id, v.label, (v.id == "topic") == u.topicBoard, func() { u.topicBoard = v.id == "topic" }))
-			}
+		var filters []W
+		grouped := str(u.meeting()["topic_id"]) != ""
+		if grouped {
+			filters = append(filters, u.drop("board/scope", labelOf(boardScopes, u.boardScope), boardScopes, u.boardScope, false, func(v string) { u.boardScope = v }))
 		}
 		options := append([]choice{{"", "全部类型"}}, kinds...)
 		kindFilter := fixedWidth(105, u.drop("board/kind", labelOf(options, u.boardKind), options, u.boardKind, false, func(v string) { u.boardKind = v }))
 		statusOptions := append([]choice{{"pending", "未完成"}, {"", "全部状态"}}, statuses...)
-		filterStatus := func(g C) D {
-			if !u.topicBoard {
+		filters = append(filters, row(4, kindFilter, func(g C) D {
+			if !grouped || u.boardScope != "topic" {
 				return D{}
 			}
-			return fixedWidth(110, u.drop("board/status", labelOf(statusOptions, u.boardStatus), statusOptions, u.boardStatus, false, func(v string) { u.boardStatus = v }))(g)
-		}
-		key := "notes"
-		if u.topicBoard {
-			key = "topicNotes"
-		}
+			return u.drop("board/status", labelOf(statusOptions, u.boardStatus), statusOptions, u.boardStatus, false, func(v string) { u.boardStatus = v })(g)
+		}))
 		var cards []W
-		for _, n := range rows(u.state[key]) {
+		for _, n := range boardCards(rows(u.state["notes"]), rows(u.state["topicNotes"]), u.boardScope, u.boardKind, u.boardStatus) {
 			kind, status := str(n["kind"]), str(n["status"])
-			if u.boardKind != "" && kind != u.boardKind {
-				continue
-			}
-			if u.topicBoard && (u.boardStatus == "pending" && status == "done" || u.boardStatus != "pending" && u.boardStatus != "" && status != u.boardStatus) {
-				continue
-			}
 			cards = append(cards, func(g C) D {
 				id := str(n["id"])
 				btn := u.click("card" + id)
@@ -272,17 +282,24 @@ func (u *workbench) board(g C) D {
 					bg = hover
 				}
 				meta := labelOf(kinds, kind)
+				if grouped {
+					meta += " · " + labelOf(noteScopes, noteScope(n))
+				}
 				if status != "" {
 					meta += "   ·   " + labelOf(statuses, status)
 				}
-				content := []W{u.oneLine(meta, 12, muted), u.text(str(n["title"]), 17, ink, true)}
+				content := []W{func(g C) D {
+					return layout.W.Layout(g, func(g C) D {
+						return box(g, mix(bg, selection, 13), 6, padding{Left: 6, Right: 6, Top: 2, Bottom: 2}.Wrap(u.text(meta, 12, accentInk, true)))
+					})
+				}, u.text(str(n["title"]), 17, ink, true)}
 				if s := str(n["body"]); s != "" {
 					content = append(content, u.text(s, 14, ink, false))
 				}
 				if s := str(n["source_title"]); s != "" {
 					content = append(content, u.text("来自 "+s, 12, muted, false))
 				}
-				return btn.Layout(g, func(g C) D { return control(full(g), bg, inset(12, col(5, content...))) })
+				return btn.Layout(g, func(g C) D { return card(full(g), bg, 12, inset(12, col(6, content...))) })
 			})
 		}
 		if len(cards) == 0 {
@@ -290,9 +307,9 @@ func (u *workbench) board(g C) D {
 		}
 		return (layout.Flex{Axis: layout.Vertical}).Layout(g,
 			layout.Rigid(func(g C) D {
-				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("便签看板", 19, ink, true)), layout.Rigid(u.button("add-note", "＋ 新建", true, func() { u.editNote(nil) })))
+				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("便签看板", 19, ink, true)), layout.Rigid(u.button("board-export", "导出", false, func() { u.exportForm("board") })), layout.Rigid(layout.Spacer{Width: 4}.Layout), layout.Rigid(u.button("add-note", "＋ 新建", true, func() { u.editNote(nil) })))
 			}),
-			layout.Rigid(func(g C) D { return (layout.Inset{Top: 8, Bottom: 8}).Layout(g, row(4, tab...)) }), layout.Rigid(padding{Bottom: 8}.Wrap(row(6, kindFilter, filterStatus))), layout.Flexed(1, func(g C) D { return u.textPane(g, &u.boardText, func(g C) D { return u.scroll(g, "board", cards) }) }))
+			layout.Rigid(padding{Top: 8, Bottom: 8}.Wrap(col(5, filters...))), layout.Flexed(1, func(g C) D { return u.textPane(g, &u.boardText, func(g C) D { return u.scroll(g, "board", cards) }) }))
 	})
 }
 func (u *workbench) jump(at float64) {
@@ -333,11 +350,15 @@ func (u *workbench) editNote(n M) {
 	if status == "" {
 		status = "open"
 	}
-	u.form("note", map[string]string{"kind": kind, "status": status, "title": str(n["title"]), "body": str(n["body"])}, "title")
+	scope := noteScope(n)
+	if n == nil && u.boardScope == "topic" && str(u.meeting()["topic_id"]) != "" {
+		scope = "topic"
+	}
+	u.form("note", map[string]string{"scope": scope, "kind": kind, "status": status, "title": str(n["title"]), "body": str(n["body"])}, "title")
 }
 func (u *workbench) noteCommand(op string) {
 	k := "note"
-	if u.topicBoard || op == "share" {
+	if u.fields["scope"] == "topic" || op == "share" {
 		k = "topic_note"
 	}
 	a := M{"op": op, "meeting": u.meeting()["id"], "id": u.note["id"], "version": u.note["version"], "kind": u.fields["kind"], "status": u.fields["status"], "title": u.val("title"), "body": u.val("body"), "editor": "native-note"}
@@ -382,6 +403,9 @@ func (u *workbench) submitForm() {
 				break
 			}
 		}
+	case "export":
+		u.cmd("export", M{"meeting": u.fields["meeting"], "section": u.fields["section"], "scope": u.fields["scope"], "format": u.fields["format"]})
+		u.open("")
 	case "path":
 		u.acceptPath()
 	case "search":

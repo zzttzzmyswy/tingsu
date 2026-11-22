@@ -16,9 +16,9 @@ type appearance struct {
 
 func defaultAppearance(dark bool) appearance {
 	if dark {
-		return appearance{rgb(0xf2f2f2), rgb(0x202020), rgb(0x2b2b2b), rgb(0x333333), rgb(0xf2f2f2), rgb(0x777777), rgb(0x505050), rgb(0xffffff), "sans-serif", 14}
+		return appearance{rgb(0xeaf0f7), rgb(0x222932), rgb(0x191e26), rgb(0x303944), rgb(0xeaf0f7), rgb(0x647789), rgb(0x67b6ff), rgb(0x091440), "sans-serif", 14}
 	}
-	return appearance{rgb(0x161616), rgb(0xffffff), rgb(0xf0f0f0), rgb(0xf0f0f0), rgb(0x161616), rgb(0x999999), rgb(0x305f9c), rgb(0xffffff), "sans-serif", 14}
+	return appearance{rgb(0x091440), rgb(0xffffff), rgb(0xf3f5f6), rgb(0xffffff), rgb(0x091440), rgb(0xb8c5d1), rgb(0x245edb), rgb(0xffffff), "sans-serif", 14}
 }
 
 func mix(a, b color.NRGBA, p int) color.NRGBA {
@@ -27,12 +27,14 @@ func mix(a, b color.NRGBA, p int) color.NRGBA {
 }
 
 var desktopColors = defaultAppearance(false)
-var ink, paper, canvas, line, muted, selection, hover color.NRGBA
+var ink, paper, canvas, line, muted, selection, hover, accentInk color.NRGBA
 
 func (u *workbench) applyAppearance(a appearance) {
 	desktopColors = a
+	clear(u.markdownRows)
 	ink, paper, canvas, line, selection = a.Text, a.Window, a.Panel, a.Border, a.Highlight
 	muted, hover = mix(a.Text, a.Window, 22), mix(a.Window, a.Highlight, 18)
+	accentInk = mix(ink, selection, 45)
 	u.th.Fg, u.th.Bg, u.th.ContrastBg, u.th.ContrastFg = ink, paper, selection, a.HighlightText
 	u.th.Face = font.Typeface(a.Family)
 	u.th.TextSize = unit.Sp(a.TextPx)

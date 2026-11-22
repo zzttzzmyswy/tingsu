@@ -3,11 +3,10 @@ package desktop
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +26,7 @@ type frameRequest struct {
 }
 type bridge struct {
 	*host
+	exports                             sync.WaitGroup
 	db                                  *store.Store
 	settings                            settings
 	data, mid                           string
@@ -83,6 +83,7 @@ func newBridge(h *host, data string) (*bridge, error) {
 		Completed: func(mid string) {
 			h.post(func() {
 				if mid == b.mid {
+					b.turns.Flush(mid)
 					b.notice("已完成本次转写", "ok")
 					b.changed()
 				}
@@ -100,7 +101,7 @@ func newBridge(h *host, data string) (*bridge, error) {
 		}
 		return number(db.Meeting(mid)["duration"])
 	},
-		Context: func(mid string) (M, error) { return db.AgentContext(mid), nil }, Pending: func(mid string) ([]M, error) { return db.PendingTopicFollowups(mid), nil },
+		Context: db.AgentInput, Pending: func(mid string) ([]M, error) { return db.PendingTopicFollowups(mid), nil },
 		Reminder: db.SaveTopicReminder, Tool: func(mid, name string, args M) (any, error) { return db.Tool(mid, name, args, "AI") },
 		Event: func(mid, kind string, at float64, speaker, text string, files []string) error {
 			return db.Event(mid, kind, at, at, speaker, text, files)
@@ -109,7 +110,14 @@ func newBridge(h *host, data string) (*bridge, error) {
 	}, truth(config.values["auto"]))
 	return b, nil
 }
-func (b *bridge) close()                   { b.cancel(); b.detach(); b.stopScreen(); b.asr.Close(); b.db.Close() }
+func (b *bridge) close() {
+	b.cancel()
+	b.detach()
+	b.stopScreen()
+	b.asr.Close()
+	b.db.Close()
+	b.exports.Wait()
+}
 func (b *bridge) notice(msg, level string) { b.signal("notice", msg, level) }
 func (b *bridge) event(kind, value string) { b.signal("event", kind, value) }
 func (b *bridge) fail(e error) {
@@ -229,28 +237,6 @@ func (b *bridge) start() error {
 	}
 	at := number(m["duration"])
 	return b.asr.Record(b.mid, s, b.asrConfig(), number(b.settings.values["chunk"]), at)
-}
-func (b *bridge) export(target string, m M) error {
-	var out strings.Builder
-	fmt.Fprintf(&out, "# %s\n\n%s\n\n## 会议动态\n\n", m["title"], m["created"])
-	mid := str(m["id"])
-	for _, e := range b.db.Events(mid, 0, 0) {
-		t := int(number(e["at"]))
-		stamp := "未标时"
-		if truth(e["timed"]) {
-			stamp = fmt.Sprintf("%02d:%02d:%02d", t/3600, t/60%60, t%60)
-		}
-		fmt.Fprintf(&out, "**%s · %s**\n\n%s\n\n", stamp, e["speaker"], e["text"])
-		if f := str(e["files"]); f != "" && f != "[]" {
-			fmt.Fprintf(&out, "附件：%s\n\n", f)
-		}
-	}
-	kinds := map[string]string{"question": "待解问题", "task": "待办事项", "idea": "灵感想法", "decision": "会议决策"}
-	out.WriteString("## 会议便签\n\n")
-	for _, n := range b.db.Notes(mid) {
-		fmt.Fprintf(&out, "### %s\n\n%s\n\n%s\n\n", n["title"], kinds[str(n["kind"])], n["body"])
-	}
-	return os.WriteFile(target, []byte(out.String()), 0600)
 }
 func (b *bridge) setFrameRequest() {
 	if !truth(b.settings.values["share_frames"]) {

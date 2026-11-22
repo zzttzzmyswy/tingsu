@@ -52,7 +52,7 @@ class TopicModel(Fixture):
         item = req["input"][0]
         if item.get("type") != "function_call_output":
             entry = json.loads(item["content"][0]["text"])
-            ctx = json.loads(entry["meeting_context"])
+            ctx = entry["meeting_context"]
             assert entry["request"] == f"{topic} / {num}"
             assert ctx["主题"] == topic and ctx["本场会议ID"] == self.server.meetings[topic][-1]
             assert [row["id"] for row in ctx["往次会议"]] == prior[::-1]

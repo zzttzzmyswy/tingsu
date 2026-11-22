@@ -123,11 +123,12 @@ func (l library) inputs(ctx context.Context, provider, text string, files []stri
 	if e != nil {
 		return nil, e
 	}
-	return l.blocks(provider, text, staged, frame, meeting)
+	in, _, err := l.blocks(provider, text, staged, frame, meeting, "")
+	return in, err
 }
-func (l library) blocks(provider, text string, files []material, frame string, meeting M) ([]M, error) {
-	request := M{"request": text, "meeting_context": encode(meeting)}
-	if runtime.GOOS == "windows" && provider == "codex" {
+func (l library) blocks(provider, text string, files []material, frame string, meeting M, previousFrame string) ([]M, string, error) {
+	request := M{"request": text, "meeting_context": meeting}
+	if len(files) > 0 && runtime.GOOS == "windows" && provider == "codex" {
 		request["workspace"] = l.root
 	}
 	native := []material{}
@@ -135,7 +136,7 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 	if frame != "" {
 		m, e := describe(frame, "")
 		if e != nil {
-			return nil, e
+			return nil, "", e
 		}
 		native = append(native, m)
 	}
@@ -143,14 +144,14 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 		p := m.source
 		rel, e := filepath.Rel(l.root, m.path)
 		if e != nil {
-			return nil, e
+			return nil, "", e
 		}
 		m.info["path"] = filepath.ToSlash(rel)
 		if provider == "codex" && runtime.GOOS == "windows" {
 			m.info["absolute_path"] = m.path
 			m.info["absolute_path_utf16"] = utf16.Encode([]rune(m.path))
 		}
-		if filepath.Base(filepath.Dir(filepath.Dir(p))) == "frames" && p != frame {
+		if strings.HasPrefix(str(m.info["mime_type"]), "image/") && p != frame {
 			native = append(native, m)
 		}
 		manifest = append(manifest, m.info)
@@ -158,7 +159,8 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 	if len(files) > 0 {
 		request["attachments"] = manifest
 	}
-	in := []M{{"type": "text", "text": encode(request)}}
+	in := []M{{"type": "text"}}
+	frameDigest := previousFrame
 	remaining := int64(24 << 20)
 	for _, m := range native {
 		mime := str(m.info["mime_type"])
@@ -169,19 +171,29 @@ func (l library) blocks(provider, text string, files []material, frame string, m
 		size := m.info["size_bytes"].(int64)
 		if size > remaining {
 			if frame == m.path {
-				return nil, errors.New("截图超过图像请求容量")
+				return nil, "", errors.New("截图超过图像请求容量")
 			}
 			continue
 		}
 		remaining -= size
 		b, e := os.ReadFile(m.path)
 		if e != nil {
-			return nil, e
+			return nil, "", e
+		}
+		if frame != "" && m.path == frame {
+			sum := sha256.Sum256(b)
+			frameDigest = hex.EncodeToString(sum[:])
+			if frameDigest == previousFrame {
+				request["共享画面"] = "与本会话上次送达的共享画面完全相同"
+				continue
+			}
+			request["共享画面"] = "本轮第一张图"
 		}
 		url := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(b)
 		in = append(in, M{"type": "image", "url": url})
 	}
-	return in, nil
+	in[0]["text"] = encode(request)
+	return in, frameDigest, nil
 }
 func (l library) get(id string) (material, error) {
 	if digestRE.MatchString(id) {

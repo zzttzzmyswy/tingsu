@@ -14,6 +14,9 @@ var formTitles = map[string]string{"history": "会议与主题", "new": "新建�
 
 func (u *workbench) modalLayout(g C) D {
 	title := formTitles[u.modal]
+	if u.modal == "export" {
+		title = "导出" + exportLabel(u.fields["section"])
+	}
 	if u.modal == "message" {
 		title = str(u.dlg["title"])
 	}
@@ -82,6 +85,12 @@ func (u *workbench) formContent() []W {
 	open := func(id, title string, fn func()) { action(id, title, false, fn) }
 	submit := func(title string) { action("save", title, true, u.submitForm) }
 	switch u.modal {
+	case "export":
+		if u.fields["section"] == "board" && str(u.meeting()["topic_id"]) != "" {
+			add(u.pick("scope", "便签范围", boardScopes))
+		}
+		add(u.pick("format", "文件格式", exportFormats))
+		submit("选择保存位置…")
 	case "history":
 		add(u.field("history-find", "查找会议或主题", false, false))
 		q := strings.ToLower(u.edit("history-find").Text())
@@ -119,13 +128,16 @@ func (u *workbench) formContent() []W {
 		edit("title", "标题", false, false)
 		edit("body", "内容", true, false)
 		add(u.pick("kind", "类型", kinds))
-		if u.topicBoard {
+		if u.note == nil && str(u.meeting()["topic_id"]) != "" {
+			add(u.pick("scope", "保存范围", noteScopes))
+		}
+		if u.fields["scope"] == "topic" {
 			add(u.pick("status", "状态", statuses))
 		}
 		submit("保存便签")
 		if u.note != nil {
-			if !u.topicBoard && str(u.meeting()["topic_id"]) != "" {
-				open("share", "加入主题看板", func() { u.noteCommand("share") })
+			if u.fields["scope"] != "topic" && str(u.meeting()["topic_id"]) != "" {
+				open("share", "共享到主题", func() { u.noteCommand("share") })
 			}
 			open("ask", "引用到 AI 输入框", func() {
 				ed := u.edit("message")
@@ -243,7 +255,7 @@ func (u *workbench) acceptPath() {
 	if v == "" {
 		return
 	}
-	var result any = v
+	var result any = manualSavePath(v)
 	if str(u.dlg["kind"]) == "open-files" {
 		var files []string
 		for _, p := range strings.Split(v, "\n") {

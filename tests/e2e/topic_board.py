@@ -38,9 +38,9 @@ class BoardModel(TopicModel):
             assert item["call_id"] == "resolve" and result["status"] == "done"
             return self.message("已将首场的问题标为完成。")
         entry = json.loads(item["content"][0]["text"])
-        ctx = json.loads(entry["meeting_context"])
+        ctx = entry["meeting_context"]
         assert ctx["主题"] == theme
-        visible = {n["title"] for n in ctx["主题共享便签"]}
+        visible = {n["title"] for n in ctx.get("主题共享便签", [])}
         assert FOLLOWUPS[TOPICS[1] if theme == TOPICS[0] else TOPICS[0]] not in visible
         if entry["request"].startswith("开场跟进"):
             pending = ctx["本次开场跟进"]

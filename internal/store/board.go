@@ -232,27 +232,3 @@ func (s *Store) Tool(mid, name string, args Row, author string) (any, error) {
 	err := s.tx(func(q *query) error { var e error; v, e = applyTool(q, mid, name, args, author); return e })
 	return v, err
 }
-func (s *Store) AgentContext(mid string) Row {
-	var ctx Row
-	_ = s.tx(func(q *query) error {
-		m := meeting(q, mid)
-		recent := q.rows("SELECT CASE WHEN timed THEN at END AS at,speaker,text FROM annotated_events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 32", mid)
-		slices.Reverse(recent)
-		ctx = Row{"会议": m["title"], "示例": integer(m["demo"], 0) != 0, "近期发言": recent, "当前便签": q.rows("SELECT id,kind,title,body FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 40", mid)}
-		if m["topic_id"] != nil {
-			history := q.rows("SELECT m.id,m.title,m.created "+priorMeetings+" ORDER BY m.rowid DESC LIMIT 5", mid)
-			for _, p := range history {
-				rs := q.rows("SELECT CASE WHEN timed THEN at END AS at,speaker,substr(text,1,200) AS text FROM annotated_events WHERE meeting=? AND kind='speech' ORDER BY at DESC,seq DESC LIMIT 2", p["id"])
-				slices.Reverse(rs)
-				p["发言摘录"] = rs
-				p["便签摘录"] = q.rows("SELECT kind,substr(title,1,100) AS title,substr(body,1,180) AS body FROM notes WHERE meeting=? ORDER BY created DESC,rowid DESC LIMIT 2", p["id"])
-			}
-			ctx["主题"] = m["topic_name"]
-			ctx["本场会议ID"] = mid
-			ctx["往次会议"] = history
-			ctx["主题共享便签"] = q.rows("SELECT "+boardPreview+boardFrom+" ORDER BY "+boardOrder+" LIMIT 20", mid)
-		}
-		return nil
-	})
-	return ctx
-}

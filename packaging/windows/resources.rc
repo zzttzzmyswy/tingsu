@@ -1,8 +1,8 @@
 #include <windows.h>
 1 ICON "tingsu.ico"
 1 VERSIONINFO
- FILEVERSION 2,3,1,0
- PRODUCTVERSION 2,3,1,0
+ FILEVERSION 2,4,0,0
+ PRODUCTVERSION 2,4,0,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -12,9 +12,9 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "Tingsu contributors"
    VALUE "FileDescription", "Tingsu Meeting Workspace"
-   VALUE "FileVersion", "2.3.1"
+   VALUE "FileVersion", "2.4.0"
    VALUE "ProductName", "Tingsu"
-   VALUE "ProductVersion", "2.3.1"
+   VALUE "ProductVersion", "2.4.0"
   END
  END
  BLOCK "VarFileInfo"

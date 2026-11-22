@@ -5,11 +5,14 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/zzttzzmyswy/tingsu/internal/store"
 )
 
 type Hooks struct {
 	Position func(string) float64
-	Context  func(string) (M, error)
+	Context  func(string, string, string) (store.AgentBatch, error)
 	Tool     func(string, string, M) (any, error)
 	Pending  func(string) ([]M, error)
 	Reminder func(string, float64, float64, string, []M) (bool, error)
@@ -33,8 +36,9 @@ type task struct {
 	mid  string
 	c    *Client
 	submission
-	follow  bool
-	partial string
+	follow    bool
+	automatic bool
+	partial   string
 }
 type Scheduler struct {
 	mu sync.Mutex
@@ -45,12 +49,13 @@ type Scheduler struct {
 	c                    *Client
 	auto, check, pending bool
 	last                 float64
+	tail                 *time.Timer
 	next                 []submission
 	active               *task
 }
 
-const autoPrompt = "观察最新发言，有重要结论、待办或未决问题时更新便签，避免重复。用简短中文反馈。"
-const followPrompt = "开场跟进。请根据上下文「本次开场跟进」用简短中文提醒与会者跟进往期问题和待办，说明来自哪场会议，必要时询问进展。本轮只做提醒。以当前提供的状态为准。"
+const autoPrompt = "结合已有会话逐条理解新增发言及本轮画面。保留重要观点、分歧、疑问、决定和行动的依据；仅在内容有实质变化时维护便签。简短反馈。"
+const followPrompt = "开场跟进：只读「本次开场跟进」中的未结项。按来源会议简述事项和当前状态，必要时询问进展。"
 
 func NewScheduler(h Hooks, auto bool) *Scheduler { return &Scheduler{h: h, auto: auto} }
 func (s *Scheduler) State() (bool, int) {
@@ -65,6 +70,7 @@ func (s *Scheduler) Detach() {
 		s.active.stop()
 	}
 	s.active = nil
+	s.clearTail()
 	s.mid = ""
 	s.c = nil
 	s.next = nil
@@ -81,12 +87,14 @@ func (s *Scheduler) Bind(mid string, c *Client, at float64) {
 	s.c = c
 	s.last = at - 28
 	s.check = s.auto
+	s.pending = s.auto
 	s.mu.Unlock()
 	s.start()
 }
 func (s *Scheduler) Cancel() {
 	s.gate.Lock()
 	s.mu.Lock()
+	s.clearTail()
 	s.check = false
 	s.pending = false
 	if s.active != nil {
@@ -103,20 +111,54 @@ func (s *Scheduler) SetAutomatic(v bool) {
 	}
 	s.auto = v
 	s.check = v
+	s.pending = v
 	if !v {
 		s.pending = false
-		if s.active != nil && s.active.follow {
+		s.clearTail()
+		if s.active != nil && (s.active.follow || s.active.automatic) {
 			s.active.stop()
 		}
 	}
 	s.mu.Unlock()
 	s.start()
 }
+
+// clearTail is called under mu. The callback also checks the timer identity.
+func (s *Scheduler) clearTail() {
+	if s.tail != nil {
+		s.tail.Stop()
+		s.tail = nil
+	}
+}
+func (s *Scheduler) Flush(mid string) {
+	s.mu.Lock()
+	if s.auto && s.mid == mid {
+		s.clearTail()
+		s.pending = true
+	}
+	s.mu.Unlock()
+	s.start()
+}
 func (s *Scheduler) Transcribed(mid string, end float64, text bool) {
 	s.mu.Lock()
-	if s.mid == mid && s.auto && text && end-s.last >= 28 {
-		s.last = end
-		s.pending = true
+	if s.mid == mid && s.auto && text {
+		if end-s.last >= 28 {
+			s.clearTail()
+			s.last = end
+			s.pending = true
+		} else if s.tail == nil {
+			var timer *time.Timer
+			timer = time.AfterFunc(28*time.Second, func() {
+				s.mu.Lock()
+				if s.tail == timer {
+					s.tail = nil
+					s.pending = true
+				}
+				s.mu.Unlock()
+				s.start()
+			})
+			s.tail = timer
+		}
 	}
 	s.mu.Unlock()
 	s.start()
@@ -127,7 +169,7 @@ func (s *Scheduler) Submit(text string, files []string) error {
 		if len(files) == 0 {
 			return errors.New("请输入消息或添加材料")
 		}
-		text = "请阅读这些会议材料。"
+		text = "请阅读本次附件，概括与本场会议有关的要点并标明来源文件。"
 	}
 	s.gate.Lock()
 	s.mu.Lock()
@@ -173,6 +215,7 @@ func (s *Scheduler) start() {
 		t.follow = true
 		s.check = false
 	case s.pending:
+		t.automatic = true
 		t.text = autoPrompt
 		s.pending = false
 	default:
@@ -218,51 +261,8 @@ func (s *Scheduler) run(t *task) {
 	}
 	if (!t.follow || len(items) > 0) && e == nil && t.Err() == nil {
 		s.changed()
-		var meeting M
-		meeting, e = s.h.Context(t.mid)
-		if e == nil {
-			frame := ""
-			if t.follow {
-				if meeting == nil {
-					meeting = M{}
-				}
-				meeting["本次开场跟进"] = items
-			} else if s.h.Frame != nil {
-				frame = s.h.Frame(t.mid, at)
-			}
-			reply, e = t.c.send(t.Context, t.mid, t.text, originals, frame, meeting, func(piece string) {
-				if t.follow {
-					return
-				}
-				s.gate.Lock()
-				defer s.gate.Unlock()
-				s.mu.Lock()
-				ok := s.active == t && t.Err() == nil
-				if ok {
-					t.partial += piece
-				}
-				v := t.partial
-				s.mu.Unlock()
-				if ok {
-					s.stream(v)
-				}
-			}, func(name string, a M) (any, error) {
-				s.gate.Lock()
-				defer s.gate.Unlock()
-				if t.Err() != nil {
-					return nil, t.Err()
-				}
-				write := !strings.HasPrefix(name, "read_") && !strings.HasPrefix(name, "list_")
-				if write && t.follow {
-					return nil, errors.New("开场提醒只读取看板")
-				}
-				out, e := s.h.Tool(t.mid, name, a)
-				if write && e == nil {
-					s.changed()
-				}
-				return out, e
-			})
-		}
+		reply, e = s.deliver(t, at, items, originals)
+
 	}
 	s.gate.Lock()
 	s.mu.Lock()
@@ -314,4 +314,74 @@ func (s *Scheduler) run(t *task) {
 	s.gate.Unlock()
 	s.changed()
 	s.start()
+}
+
+func (s *Scheduler) deliver(t *task, at float64, items []M, originals []material) (string, error) {
+	for {
+		if err := t.Err(); err != nil {
+			return "", err
+		}
+		batch, err := s.h.Context(t.mid, t.c.cfg.Provider, t.c.SessionID())
+		if err != nil {
+			return "", err
+		}
+		meeting := batch.Context
+		text, files, frame := t.text, originals, ""
+		intermediate := batch.More && !t.follow
+		switch {
+		case t.follow:
+			meeting = M{"本场会议ID": t.mid, "会议": meeting["会议"], "主题": meeting["主题"], "本次开场跟进": items}
+		case t.automatic && !batch.HasSpeech:
+			return "", nil
+		case intermediate:
+			text = "按顺序分析这批新增原文，后续还有输入。保留判断依据，等收到本轮任务再统一作答。"
+			files = nil
+		case s.h.Frame != nil:
+			frame = s.h.Frame(t.mid, at)
+		}
+		reply, err := t.c.send(t.Context, t.mid, text, files, frame, meeting, func(piece string) {
+			if t.follow || intermediate {
+				return
+			}
+			s.gate.Lock()
+			defer s.gate.Unlock()
+			s.mu.Lock()
+			ok := s.active == t && t.Err() == nil
+			if ok {
+				t.partial += piece
+			}
+			v := t.partial
+			s.mu.Unlock()
+			if ok {
+				s.stream(v)
+			}
+		}, func(name string, a M) (any, error) {
+			s.gate.Lock()
+			defer s.gate.Unlock()
+			if t.Err() != nil {
+				return nil, t.Err()
+			}
+			write := !strings.HasPrefix(name, "read_") && !strings.HasPrefix(name, "list_")
+			if write && t.follow {
+				return nil, errors.New("开场提醒只读取看板")
+			}
+			out, e := s.h.Tool(t.mid, name, a)
+			if write && e == nil {
+				s.changed()
+			}
+			return out, e
+		})
+		if err != nil || t.follow {
+			return reply, err
+		}
+		s.gate.Lock()
+		err = t.Err()
+		if err == nil {
+			err = batch.Acknowledge()
+		}
+		s.gate.Unlock()
+		if err != nil || !intermediate {
+			return reply, err
+		}
+	}
 }

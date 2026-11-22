@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 )
 
@@ -26,13 +27,14 @@ type backend interface {
 	close()
 }
 type Client struct {
-	cfg     Config
-	impl    backend
-	op      sync.Mutex
-	mu      sync.RWMutex
-	session string
-	life    context.Context
-	stop    context.CancelFunc
+	cfg                       Config
+	impl                      backend
+	op                        sync.Mutex
+	mu                        sync.RWMutex
+	session                   string
+	frameMeeting, frameDigest string
+	life                      context.Context
+	stop                      context.CancelFunc
 }
 
 func New(c Config) (*Client, error) {
@@ -115,6 +117,9 @@ func (c *Client) Open(ctx context.Context, id, title string) (string, error) {
 	}
 	if e == nil {
 		c.mu.Lock()
+		if c.session != sid {
+			c.frameMeeting, c.frameDigest = "", ""
+		}
 		c.session = sid
 		c.mu.Unlock()
 	}
@@ -141,14 +146,18 @@ func (c *Client) send(ctx context.Context, mid, text string, files []material, f
 		return "", errors.New("请先创建或选择 AI 会话")
 	}
 	lib := library{root: c.Workspace(), scope: mid}
-	inputs, e := lib.blocks(c.cfg.Provider, text, files, frame, meeting)
+	previousFrame := c.frameDigest
+	if mid != c.frameMeeting {
+		previousFrame = ""
+	}
+	inputs, frameDigest, e := lib.blocks(c.cfg.Provider, text, files, frame, meeting, previousFrame)
 	if e != nil {
 		return "", e
 	}
 	if delta == nil {
 		delta = func(string) {}
 	}
-	return c.impl.send(ctx, id, inputs, delta, func(name string, args M) (any, error) {
+	reply, err := c.impl.send(ctx, id, inputs, delta, func(name string, args M) (any, error) {
 		if e := ctx.Err(); e != nil {
 			return nil, e
 		}
@@ -163,21 +172,37 @@ func (c *Client) send(ctx context.Context, mid, text string, files []material, f
 		}
 		return tool(name, args)
 	})
+	if err == nil && ctx.Err() == nil {
+		c.frameMeeting, c.frameDigest = mid, frameDigest
+	}
+	return reply, err
 }
 
 //go:embed toolkit.json
 var kitJSON []byte
 var kit struct {
-	Guidance, Local, Codex string
-	Schema                 M
-	Tools                  []M
-	Office                 M
+	Local, Codex string
+	Schema       M
+	Tools        []M
+	Office       M
 }
 
 func init() {
 	if e := json.Unmarshal(kitJSON, &kit); e != nil {
 		panic(e)
 	}
+	// Codex submits actions through the structured reply. Derive its argument
+	// list from the same tool definitions used by the native tool adapters.
+	var instructions strings.Builder
+	instructions.WriteString(kit.Local + "\n" + kit.Codex)
+	for _, tool := range specs(true, false) {
+		var fields []string
+		for _, key := range list(obj(tool["parameters"])["required"]) {
+			fields = append(fields, str(key))
+		}
+		fmt.Fprintf(&instructions, "\n%s(%s)", tool["name"], strings.Join(fields, ", "))
+	}
+	kit.Codex = instructions.String()
 }
 func str(a any) string { s, _ := a.(string); return s }
 func obj(a any) M      { v, _ := a.(map[string]any); return v }

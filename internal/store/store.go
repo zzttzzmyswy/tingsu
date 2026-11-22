@@ -293,6 +293,24 @@ func events(q *query, mid string, limit, before int) []Row {
 	slices.Reverse(r)
 	return r
 }
+
+// ExportData reads a consistent snapshot, including records outside the UI page.
+func (s *Store) ExportData(mid string, boardOnly bool) (m Row, records, local, shared []Row, err error) {
+	err = s.tx(func(q *query) error {
+		m = meeting(q, mid)
+		if m == nil {
+			return errors.New("找不到要导出的会议")
+		}
+		local = notes(q, mid)
+		if boardOnly {
+			shared = topicNotes(q, mid)
+		} else {
+			records = events(q, mid, 0, 0)
+		}
+		return nil
+	})
+	return
+}
 func (s *Store) Events(mid string, limit, before int) []Row {
 	return events(s.read(), mid, limit, before)
 }

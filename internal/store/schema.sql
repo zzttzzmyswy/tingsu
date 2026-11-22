@@ -45,3 +45,9 @@ CREATE TABLE IF NOT EXISTS untimed_transcript_events (
 );
 CREATE VIEW IF NOT EXISTS annotated_events AS
   SELECT e.*, (u.seq IS NULL) AS timed FROM events e LEFT JOIN untimed_transcript_events u ON u.seq=e.seq;
+
+CREATE TABLE IF NOT EXISTS agent_delivery (
+  meeting TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL, session TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
+  PRIMARY KEY(meeting,provider,session)
+);

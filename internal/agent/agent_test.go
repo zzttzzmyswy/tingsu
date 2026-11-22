@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zzttzzmyswy/tingsu/internal/store"
 )
 
 type queueFixture struct{ backend }
@@ -43,7 +45,9 @@ func TestTurnQueueCancelAndDetach(t *testing.T) {
 	c.impl = queueFixture{}
 	c.session = "fixture"
 	defer c.Close()
-	h := Hooks{Position: func(string) float64 { return 1 }, Context: func(string) (M, error) { return M{}, nil }, Event: func(mid, k string, _ float64, _, text string, _ []string) error {
+	h := Hooks{Position: func(string) float64 { return 1 }, Context: func(string, string, string) (store.AgentBatch, error) {
+		return store.AgentBatch{Context: M{}, Acknowledge: func() error { return nil }}, nil
+	}, Event: func(mid, k string, _ float64, _, text string, _ []string) error {
 		if k == "assistant" {
 			mu.Lock()
 			assistant = append(assistant, text)

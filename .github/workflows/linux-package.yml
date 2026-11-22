@@ -14,7 +14,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y squashfs-tools librsvg2-bin
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools librsvg2-bin libegl1 libgles2 libgl1-mesa-dri libwayland-egl1 libxkbcommon-x11-0 libxcursor1 libx11-xcb1 xvfb xdotool dbus-x11
       - name: Build and verify release executable
         run: |
           packaging/linux/build.sh
@@ -22,6 +22,12 @@ jobs:
           chmod +x Tingsu-Linux-x86_64.AppImage
           ./Tingsu-Linux-x86_64.AppImage --appimage-extract >/dev/null
           ./squashfs-root/AppRun --version
+          xvfb-run -a dbus-run-session -- sh -ec '
+            ./squashfs-root/AppRun --x11 &
+            desktop=$!
+            trap "kill $desktop 2>/dev/null || true" EXIT
+            timeout 30s xdotool search --sync --onlyvisible --name "听序"
+          '
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tingsu-linux

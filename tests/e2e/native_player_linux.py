@@ -223,7 +223,7 @@ def run(args):
 
     def idle_meter():
         pixels = toolbar_pixels()
-        idle = (pixels == (201, 214, 210)).all(axis=2)
+        idle = (pixels == border).all(axis=2)
         for y, row in enumerate(idle):
             # Ten inactive segments separated by one physical pixel at 1x.
             match = re.search(rb"(?:\x01{2,10}\x00{1,3}){9}\x01{2,10}", row.tobytes())
@@ -372,6 +372,9 @@ def run(args):
             "player audio stream",
             lambda: b"MeetingQAPlayer" in cmd("pactl", "list", "sink-inputs"),
         )
+        palette = json.loads(cmd(app, "--read-system-appearance"))
+        border = tuple(palette["Border"][c] for c in "RGB")
+        highlight = tuple(palette["Highlight"][c] for c in "RGB")
         start("app", [app, "--" + args.protocol])
         wait("meeting DB", lambda: dbcount("select count(*) from meetings"))
         if wl:
@@ -432,7 +435,7 @@ def run(args):
 
             def meter_lit():
                 bar = toolbar_pixels()[y, left:right]
-                return (bar == (18, 105, 86)).all(axis=1).sum() >= 3
+                return (bar == highlight).all(axis=1).sum() >= 3
 
             wait("toolbar meter reacting to player PCM", meter_lit)
             wait(

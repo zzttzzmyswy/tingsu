@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,8 +91,10 @@ func Run(args []string) error {
 				os.Setenv("GDK_BACKEND", a[2:])
 				os.Setenv("TINGSU_CAPTURE_DESKTOP", a[2:])
 			}
+		case "--read-system-appearance":
+			return json.NewEncoder(os.Stdout).Encode(probeAppearance())
 		case "--version":
-			fmt.Println("Tingsu 2.3.0")
+			fmt.Println("Tingsu 2.3.1")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)

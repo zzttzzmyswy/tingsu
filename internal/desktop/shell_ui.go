@@ -3,7 +3,9 @@ package desktop
 import (
 	"fmt"
 	"image"
+	"math"
 	"strings"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -45,7 +47,7 @@ func (u *workbench) menuBar(g C) D {
 	settings := []menuItem{{"prefs", "首选项…", "Ctrl+,", u.settingsForm}}
 	var ws []W
 	ws = append(ws, func(g C) D {
-		return padding{Left: 8, Right: 12}.Wrap(row(7, func(g C) D { return glyph(g, waveIcon, 20, teal) }, u.text("听序", 16, ink, true)))(g)
+		return padding{Left: 8, Right: 12}.Wrap(row(7, func(g C) D { return glyph(g, waveIcon, 20, selection) }, u.text("听序", 16, ink, true)))(g)
 	})
 	for _, m := range []struct {
 		id, title string
@@ -92,7 +94,7 @@ func (u *workbench) captureAudio(g C) D {
 	} else if capture == "draining" {
 		rec = "正在停止"
 	}
-	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(row(5, func(g C) D { return glyph(g, micIcon, 18, teal) }, u.text("音频", 14, ink, true))), layout.Rigid(layout.Spacer{Width: 8}.Layout),
+	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(row(5, func(g C) D { return glyph(g, micIcon, 18, selection) }, u.text("音频", 14, ink, true))), layout.Rigid(layout.Spacer{Width: 8}.Layout),
 		layout.Flexed(1, u.drop("capture/audio", name, opts, sel, true, func(id string) {
 			if id == "@refresh" {
 				u.openAudio()
@@ -146,10 +148,10 @@ func (u *workbench) captureVideo(g C) D {
 			}
 		})
 	}
-	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(row(5, func(g C) D { return glyph(g, displayIcon, 18, teal) }, u.text("窗口画面", 14, ink, true))), layout.Rigid(layout.Spacer{Width: 8}.Layout), layout.Flexed(1, selectWindow))
+	return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(row(5, func(g C) D { return glyph(g, displayIcon, 18, selection) }, u.text("窗口画面", 14, ink, true))), layout.Rigid(layout.Spacer{Width: 8}.Layout), layout.Flexed(1, selectWindow))
 }
 func (u *workbench) toolbar(g C) D {
-	return box(full(g), rgb(0xf6f8f8), 0, padding{Top: 8, Bottom: 8, Left: 15, Right: 15}.Wrap(func(g C) D {
+	return box(full(g), canvas, 0, padding{Top: 8, Bottom: 8, Left: 15, Right: 15}.Wrap(func(g C) D {
 		agent := "连接助手"
 		if n := str(u.state["agentName"]); n != "" {
 			agent = labelOf(services, n) + " 会话"
@@ -162,96 +164,126 @@ func (u *workbench) workspace(g C) D {
 	return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Rigid(u.menuBar), layout.Rigid(rule), layout.Rigid(u.toolbar), layout.Rigid(rule), layout.Flexed(1, u.panes))
 }
 func (u *workbench) panes(g C) D {
-	total := float32(g.Constraints.Max.X) / g.Metric.PxPerDp
-	rail := float32(0)
-	showRail := !u.hideRail && total >= 910
-	const handle = 10
+	width := g.Constraints.Max.X
+	handle := g.Dp(10)
+	showRail := !u.hideRail && width >= g.Dp(910)
+	rail, board := 0, 0
 	if showRail {
-		rail = u.resizePane(g, &u.railDrag, u.railWidth, 155, min(360, total-610), false)
-		u.railWidth = rail
-	}
-	board := float32(0)
-	if !u.hideBoard {
-		board = u.resizePane(g, &u.boardDrag, u.boardWidth, 230, total-rail-350-2*handle, true)
-		u.boardWidth = board
-	}
-	var parts []layout.FlexChild
-	gap := layout.Spacer{Width: handle}
-	if showRail {
-		parts = append(parts, layout.Rigid(fixedWidth(unit.Dp(rail), u.rail)), layout.Rigid(gap.Layout))
-	}
-	parts = append(parts, layout.Flexed(1, u.feed))
-	if !u.hideBoard {
-		parts = append(parts, layout.Rigid(gap.Layout), layout.Rigid(fixedWidth(unit.Dp(board), u.board)))
-	}
-	dim := (layout.Flex{}).Layout(g, parts...)
-	if showRail {
-		divider(g, &u.railDrag, g.Dp(unit.Dp(rail)), g.Dp(handle))
+		rail = u.railDrag.width(g, g.Dp(unit.Dp(u.railWidth)), g.Dp(155), g.Dp(360), width, handle, false)
+		u.railWidth = float32(rail) / g.Metric.PxPerDp
 	}
 	if !u.hideBoard {
-		divider(g, &u.boardDrag, g.Constraints.Max.X-g.Dp(unit.Dp(board))-g.Dp(handle), g.Dp(handle))
+		maxWidth := width - rail - handle - g.Dp(350)
+		if showRail {
+			maxWidth -= handle
+		}
+		board = u.boardDrag.width(g, g.Dp(unit.Dp(u.boardWidth)), g.Dp(230), maxWidth, width, handle, true)
+		u.boardWidth = float32(board) / g.Metric.PxPerDp
 	}
-	return dim
+
+	// Draw and hit-test in exactly the same pixel space, including fractional DPI.
+	layoutPane := func(x, w int, fn W) {
+		t := op.Offset(image.Pt(x, 0)).Push(g.Ops)
+		child := g
+		child.Constraints = layout.Exact(image.Pt(max(0, w), g.Constraints.Max.Y))
+		area := clip.Rect(image.Rectangle{Max: child.Constraints.Max}).Push(g.Ops)
+		fn(child)
+		area.Pop()
+		t.Pop()
+	}
+	left, right := 0, width
+	if showRail {
+		layoutPane(0, rail, u.rail)
+		left = rail + handle
+	}
+	if !u.hideBoard {
+		right = width - board - handle
+		layoutPane(right+handle, board, u.board)
+	}
+	layoutPane(left, right-left, u.feed)
+	if showRail {
+		divider(g, &u.railDrag, rail, handle)
+	}
+	if !u.hideBoard {
+		divider(g, &u.boardDrag, right, handle)
+	}
+	return D{Size: g.Constraints.Max}
 }
 
 type panelDrag struct {
-	active    bool
-	pointer   pointer.ID
-	at, start float32
+	lastMove time.Time
+	active   bool
+	pointer  pointer.ID
+	grab     float32 // press position within the divider, in physical pixels
 }
 
-func (u *workbench) resizePane(g C, d *panelDrag, width, low, high float32, right bool) float32 {
-	width = min(max(low, width), high)
+func (d *panelDrag) width(g C, initial, low, high, total, handle int, right bool) int {
+	high = max(0, high)
+	width := min(high, max(low, initial))
 	for {
-		ev, ok := g.Event(pointer.Filter{Target: d, Kinds: pointer.Press | pointer.Release | pointer.Cancel | pointer.Drag})
+		ev, ok := g.Event(pointer.Filter{Target: d, Kinds: pointer.Press | pointer.Move | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
 			break
 		}
 		e := ev.(pointer.Event)
 		switch e.Kind {
 		case pointer.Press:
-			if d.active || (e.Source == pointer.Mouse && e.Buttons != pointer.ButtonPrimary) {
+			if d.active || (e.Source == pointer.Mouse && e.Buttons&pointer.ButtonPrimary == 0) {
 				continue
 			}
-			d.active, d.pointer, d.at, d.start = true, e.PointerID, e.Position.X, width
+			x := width
+			if right {
+				x = total - width - handle
+			}
+			d.lastMove = g.Now
+			d.active, d.pointer, d.grab = true, e.PointerID, e.Position.X-float32(x)
 			g.Execute(pointer.GrabCmd{Tag: d, ID: e.PointerID})
-		case pointer.Drag, pointer.Release:
+		case pointer.Move, pointer.Drag, pointer.Release:
 			if !d.active || e.PointerID != d.pointer {
 				continue
 			}
-			delta := (e.Position.X - d.at) / g.Metric.PxPerDp
+			x := int(math.Round(float64(e.Position.X - d.grab)))
 			if right {
-				delta = -delta
+				x = total - handle - x
 			}
-			width = min(high, max(low, d.start+delta))
+			next := min(high, max(low, x))
+			if width != next {
+				d.lastMove = g.Now
+			}
+			width = next
 			if e.Kind == pointer.Release {
 				d.active = false
 			}
 		case pointer.Cancel:
-			d.active = false
+			if e.PointerID == d.pointer {
+				d.active = false
+			}
 		}
+	}
+	if d.active && g.Now.Sub(d.lastMove) < 60*time.Millisecond {
+		g.Execute(op.InvalidateCmd{})
 	}
 	return width
 }
 func divider(g C, d *panelDrag, x, width int) {
-	h := g.Constraints.Max.Y
-	area := clip.Rect(image.Rect(x, 0, x+width, h)).Push(g.Ops)
-	defer area.Pop()
+	rect := image.Rect(x, 0, x+width, g.Constraints.Max.Y)
+	paint.FillShape(g.Ops, canvas, clip.Rect(rect).Op())
+	mid := x + width/2
+	paint.FillShape(g.Ops, line, clip.Rect(image.Rect(mid, 0, mid+max(1, g.Dp(1)), rect.Max.Y)).Op())
+	if d.active {
+		rect = image.Rectangle{Max: g.Constraints.Max}
+	}
+	area := clip.Rect(rect).Push(g.Ops)
 	event.Op(g.Ops, d)
 	pointer.CursorColResize.Add(g.Ops)
-	paint.Fill(g.Ops, rgb(0xe6ecec))
-	c := rgb(0x8a9f9b)
-	if d.active {
-		c = teal
-	}
-	mid := x + width/2
-	paint.FillShape(g.Ops, c, clip.UniformRRect(image.Rect(mid-g.Dp(1), h/2-g.Dp(20), mid+g.Dp(2), h/2+g.Dp(20)), g.Dp(2)).Op(g.Ops))
+	area.Pop()
 }
+
 func (u *workbench) rail(g C) D {
 	g.Constraints.Min.Y = g.Constraints.Max.Y
-	return box(g, rgb(0xf4f7f7), 0, padding{Top: 16, Left: 10, Right: 8, Bottom: 6}.Wrap(func(g C) D {
+	return box(g, canvas, 0, padding{Top: 16, Left: 10, Right: 8, Bottom: 6}.Wrap(func(g C) D {
 		return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Rigid(func(g C) D {
-			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, row(6, func(g C) D { return glyph(g, folderIcon, 17, teal) }, u.text("会议列表", 15, ink, true))), layout.Rigid(u.button("nav-new", "＋", false, u.newMeeting)))
+			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, row(6, func(g C) D { return glyph(g, folderIcon, 17, selection) }, u.text("会议列表", 15, ink, true))), layout.Rigid(u.button("nav-new", "＋", false, u.newMeeting)))
 		}),
 			layout.Rigid(padding{Top: 9, Bottom: 10}.Wrap(u.field("rail-find", "查找会议或主题", false, false))),
 			layout.Flexed(1, func(g C) D {
@@ -273,9 +305,9 @@ func (u *workbench) rail(g C) D {
 						for b.Clicked(g) {
 							u.cmd("select", M{"id": id})
 						}
-						bg := rgb(0xf4f7f7)
+						bg := canvas
 						if id == str(u.meeting()["id"]) {
-							bg = mint
+							bg = hover
 						} else if b.Hovered() {
 							bg = paper
 						}
@@ -297,16 +329,16 @@ func (u *workbench) statusBar(g C) D {
 	if g.Now.Before(u.noticeUntil) {
 		status = u.noticeText
 		if u.noticeKind == "error" {
-			c = rgb(0x983c33)
+			c = ink
 		}
 		g.Execute(op.InvalidateCmd{At: u.noticeUntil})
 	} else if str(u.state["capture"]) == "recording" {
 		status = "正在转写"
-		c = teal
+		c = selection
 	}
 	asr := map[string]string{"sophnet": "Sophnet", "siliconflow": "SiliconFlow"}[str(obj(u.state["settings"])["provider"])]
 	duration := clockText(max(number(u.meeting()["duration"]), u.position))
-	return box(full(g), rgb(0xedf2f0), 0, padding{Top: 5, Bottom: 5, Left: 13, Right: 13}.Wrap(func(g C) D {
+	return box(full(g), canvas, 0, padding{Top: 5, Bottom: 5, Left: 13, Right: 13}.Wrap(func(g C) D {
 		return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.oneLine(status, 12, c)), layout.Rigid(u.oneLine(fmt.Sprintf("%s   ·   %s", asr, duration), 12, muted)))
 	}))
 }

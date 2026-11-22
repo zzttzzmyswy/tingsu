@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/f32"
+
 	"gioui.org/font"
 	"gioui.org/font/opentype"
 	"gioui.org/io/event"
@@ -35,17 +35,6 @@ import (
 type C = layout.Context
 type D = layout.Dimensions
 type W = layout.Widget
-
-var (
-	ink    = rgb(0x172b2a)
-	muted  = rgb(0x526b67)
-	paper  = rgb(0xffffff)
-	canvas = rgb(0xf4f7f5)
-	line   = rgb(0xd6e2dc)
-	teal   = rgb(0x126956)
-	mint   = rgb(0xe0f0e8)
-	dark   = rgb(0x153b34)
-)
 
 func rgb(n uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(n >> 16), G: uint8(n >> 8), B: uint8(n), A: 255}
@@ -70,6 +59,9 @@ func clockText(t float64) string {
 }
 
 type workbench struct {
+	feedText, boardText              resizeContent
+	records                          recordView
+	focused, themePending            bool
 	peak                             float64
 	receiving                        bool
 	dismiss                          bool
@@ -126,9 +118,8 @@ func newWorkbench(send func(packet)) *workbench {
 	faces, err := opentype.ParseCollection(interfaceFont)
 	if err == nil {
 		u.th.Shaper = text.NewShaper(text.WithCollection(faces))
-		u.th.Face = faces[0].Font.Typeface
 	}
-	u.th.Palette.ContrastBg = teal
+	u.applyAppearance(systemAppearance())
 	return u
 }
 
@@ -152,6 +143,11 @@ func (u *workbench) drain() {
 	u.mu.Unlock()
 	for _, m := range batch {
 		switch str(m["type"]) {
+		case "appearance":
+			u.themePending = false
+			if a, ok := m["appearance"].(appearance); ok && a != desktopColors {
+				u.applyAppearance(a)
+			}
 		case "meter":
 			u.position = number(m["position"])
 			u.peak = number(m["peak"])
@@ -212,6 +208,7 @@ func (u *workbench) drain() {
 					u.drafts[old] = u.edit("message").Text()
 					u.edit("message").SetText(u.drafts[id])
 					u.feedKind = ""
+					u.records = recordView{}
 					u.boardKind = ""
 					u.boardStatus = "pending"
 					u.topicBoard = str(u.meeting()["topic_id"]) != ""
@@ -225,6 +222,7 @@ func (u *workbench) drain() {
 				if !truth(next["sending"]) {
 					u.stream = ""
 				}
+				u.updateFeed()
 				if uri := str(next["frame"]); uri != u.frameURI {
 					u.frameURI = uri
 					u.hasFrame = false
@@ -252,6 +250,9 @@ func (u *workbench) drain() {
 					}
 				case "delta":
 					u.stream = second
+					if u.records.stream != (second != "" && (u.feedKind == "" || u.feedKind == "assistant")) {
+						u.updateFeed()
+					}
 				case "sent":
 					if u.edit("message").Text() == u.pendingSend {
 						u.edit("message").SetText("")
@@ -316,6 +317,12 @@ func (u *workbench) run() error {
 			u.mu.Lock()
 			u.window = n
 			u.mu.Unlock()
+		case app.ConfigEvent:
+			if e.Config.Focused && !u.focused && !u.themePending {
+				u.themePending = true
+				go func() { u.receive(M{"type": "appearance", "appearance": systemAppearance()}) }()
+			}
+			u.focused = e.Config.Focused
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			u.drain()
@@ -377,7 +384,7 @@ func (u *workbench) click(id string) *widget.Clickable {
 }
 func (u *workbench) text(s string, size unit.Sp, c color.NRGBA, bold bool) W {
 	return func(g C) D {
-		l := material.Label(u.th, size, s)
+		l := material.Label(u.th, u.fontSize(size), s)
 		l.Color = c
 		if bold {
 			l.Font.Weight = font.SemiBold
@@ -392,19 +399,15 @@ func (u *workbench) button(id, s string, primary bool, fn func()) W {
 			fn()
 			u.window.Invalidate()
 		}
-		bg, fg := rgb(0xedf2f1), ink
+		bg, fg := desktopColors.Button, desktopColors.ButtonText
 		if primary {
-			bg, fg = teal, paper
+			bg, fg = selection, desktopColors.HighlightText
 		}
-		if btn.Hovered() || g.Focused(btn) {
-			if primary {
-				bg = rgb(0x0c7966)
-			} else {
-				bg = mint
-			}
+		if btn.Pressed() || (!primary && (btn.Hovered() || g.Focused(btn))) {
+			bg, fg = hover, ink
 		}
 		return btn.Layout(g, func(g C) D {
-			return relief(g, bg, 5, btn.Pressed(), padding{Top: 7, Bottom: 7, Left: 11, Right: 11}.Wrap(func(g C) D { return layout.Center.Layout(g, u.oneLine(s, 13, fg)) }))
+			return control(g, bg, padding{Top: 7, Bottom: 7, Left: 11, Right: 11}.Wrap(func(g C) D { return layout.Center.Layout(g, u.oneLine(s, 13, fg)) }))
 		})
 	}
 }
@@ -442,33 +445,8 @@ func box(g C, c color.NRGBA, r unit.Dp, child W) D {
 	return d
 }
 
-// Draw an edge, a highlighted face and a lower lip. Pressing lowers the face.
-func relief(g C, c color.NRGBA, r unit.Dp, pressed bool, w W) D {
-	rec := op.Record(g.Ops)
-	dim := w(g)
-	content := rec.Stop()
-	bounds := image.Rectangle{Max: dim.Size}
-	rad := g.Dp(r)
-	edge := max(1, g.Dp(1))
-	paint.FillShape(g.Ops, rgb(0x899d98), clip.UniformRRect(bounds, rad).Op(g.Ops))
-	face := bounds.Inset(edge)
-	offset := edge
-	if pressed {
-		face.Min.Y += edge
-	} else {
-		face.Max.Y -= edge
-		offset = 0
-	}
-	highlight := func(v uint8) uint8 { return uint8((int(v)*7 + 255) / 8) }
-	light := color.NRGBA{highlight(c.R), highlight(c.G), highlight(c.B), 255}
-	area := clip.UniformRRect(face, max(0, rad-edge)).Push(g.Ops)
-	paint.LinearGradientOp{Stop2: f32.Pt(0, float32(dim.Size.Y)), Color1: light, Color2: c}.Add(g.Ops)
-	paint.PaintOp{}.Add(g.Ops)
-	area.Pop()
-	t := op.Offset(image.Pt(0, offset)).Push(g.Ops)
-	content.Add(g.Ops)
-	t.Pop()
-	return dim
+func control(g C, bg color.NRGBA, child W) D {
+	return widget.Border{Color: line, Width: 1}.Layout(g, func(g C) D { return box(g, bg, 0, child) })
 }
 func full(g C) C { g.Constraints.Min.X = g.Constraints.Max.X; return g }
 func (u *workbench) field(id, hint string, multi, secret bool) W {
@@ -478,13 +456,13 @@ func (u *workbench) field(id, hint string, multi, secret bool) W {
 		if secret {
 			ed.Mask = '•'
 		}
-		return box(full(g), canvas, 6, inset(9, func(g C) D {
+		return control(full(g), paper, inset(9, func(g C) D {
 			if multi {
 				g.Constraints.Min.Y = g.Dp(46)
 				g.Constraints.Max.Y = min(g.Constraints.Max.Y, g.Dp(105))
 			}
 			style := material.Editor(u.th, ed, hint)
-			style.TextSize = 15
+			style.TextSize = u.fontSize(15)
 			style.Color = ink
 			style.HintColor = muted
 			return style.Layout(g)
@@ -519,7 +497,7 @@ func (u *workbench) layout(g C) D {
 	}
 	(layout.Flex{Axis: layout.Vertical}).Layout(body, layout.Flexed(1, u.workspace), layout.Rigid(rule), layout.Rigid(u.statusBar))
 	if u.modal != "" {
-		paint.Fill(g.Ops, color.NRGBA{20, 39, 38, 76})
+		paint.Fill(g.Ops, color.NRGBA{A: 62})
 		u.modalLayout(g)
 	}
 	if dismissID != "" && dismissID == u.popup.id {

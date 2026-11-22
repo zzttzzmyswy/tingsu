@@ -90,18 +90,18 @@ func mouseClick(h uintptr, x, y int) {
 }
 
 // Locate the board divider on two horizontal scan lines of the actual window.
-func boardDivider(h uintptr, width, height int) int {
+func boardDivider(h uintptr, width, height int, border uintptr) int {
 	dc := call("GetDC", h)
 	defer call("ReleaseDC", h, dc)
 	pixel := windows.NewLazySystemDLL("gdi32.dll").NewProc("GetPixel")
 	var first, last int
 	for x := width / 2; x < width-16; x++ {
 		color, _, _ := pixel.Call(dc, uintptr(x), uintptr(height/3))
-		if color != 0xecece6 {
+		if color != border {
 			continue
 		}
 		color, _, _ = pixel.Call(dc, uintptr(x), uintptr(height*2/3))
-		if color == 0xecece6 {
+		if color == border {
 			if first == 0 {
 				first = x
 			}
@@ -114,12 +114,21 @@ func boardDivider(h uintptr, width, height int) int {
 	return (first + last) / 2
 }
 
-func dragBoard(h uintptr) error {
+func dragBoard(h uintptr, app string) error {
 	var rect struct{ Left, Top, Right, Bottom int32 }
 	call("GetClientRect", h, uintptr(unsafe.Pointer(&rect)))
 	width, height := int(rect.Right), int(rect.Bottom)
 	fmt.Printf("Window client %dx%d, desktop %dx%d, DPI %d, focused %t\n", width, height, call("GetSystemMetrics", 0), call("GetSystemMetrics", 1), call("GetDpiForWindow", h), call("GetForegroundWindow") == h)
-	start := boardDivider(h, width, height)
+	data, err := exec.Command(app, "--read-system-appearance").Output()
+	if err != nil {
+		return err
+	}
+	var style struct{ Border struct{ R, G, B uintptr } }
+	if err = json.Unmarshal(data, &style); err != nil {
+		return err
+	}
+	border := style.Border.R | style.Border.G<<8 | style.Border.B<<16
+	start := boardDivider(h, width, height, border)
 	if start < 0 {
 		return fmt.Errorf("board divider missing in %dx%d client", width, height)
 	}
@@ -131,11 +140,109 @@ func dragBoard(h uintptr) error {
 		target := start - offset
 		mouseMove(h, target, height/2)
 		time.Sleep(250 * time.Millisecond)
-		actual := boardDivider(h, width, height)
+		actual := boardDivider(h, width, height, border)
 		if actual < target-3 || actual > target+3 {
 			return fmt.Errorf("board drag from %d to %d: divider at %d", start, target, actual)
 		}
 	}
+	return nil
+}
+
+// A long imported transcript exercises the scrollbar on the actual Windows
+// surface. Read the painted thumb at its client coordinate after each gesture.
+func scrollMeeting(h uintptr, app string, db *sql.DB, title string) error {
+	data, err := exec.Command(app, "--read-system-appearance").Output()
+	if err != nil {
+		return err
+	}
+	type rgb struct{ R, G, B int }
+	var s struct{ Text, Window, Panel, Border rgb }
+	if err = json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	ref := func(c rgb) uintptr { return uintptr(c.R | c.G<<8 | c.B<<16) }
+	mix := func(t, b int) int { return (t*78 + b*22) / 100 }
+	thumb := ref(rgb{mix(s.Text.R, s.Window.R), mix(s.Text.G, s.Window.G), mix(s.Text.B, s.Window.B)})
+	var rect struct{ Left, Top, Right, Bottom int32 }
+	call("GetClientRect", h, uintptr(unsafe.Pointer(&rect)))
+	dpi := int(call("GetDpiForWindow", h))
+	x := boardDivider(h, int(rect.Right), int(rect.Bottom), ref(s.Border)) - (27*dpi+48)/96
+	dc := call("GetDC", h)
+	defer call("ReleaseDC", h, dc)
+	pixel := windows.NewLazySystemDLL("gdi32.dll").NewProc("GetPixel")
+	type section struct{ top, bottom, first, last int }
+	bounds := func() section {
+		best, run := section{}, section{}
+		for y := 60; y < int(rect.Bottom); y++ {
+			c, _, _ := pixel.Call(dc, uintptr(x), uintptr(y))
+			if c != ref(s.Panel) && c != thumb {
+				run = section{}
+				continue
+			}
+			if run.top == 0 {
+				run.top = y
+			}
+			run.bottom = y
+			if c == thumb {
+				if run.first == 0 {
+					run.first = y
+				}
+				run.last = y
+			}
+			if run.last-run.first > 8 && run.bottom-run.top > best.bottom-best.top {
+				best = run
+			}
+		}
+		return best
+	}
+	r := bounds()
+	if r.bottom-r.top < 150 || r.last != r.bottom {
+		return fmt.Errorf("initial viewport not at bottom: %+v at x%d", r, x)
+	}
+	middle := (r.top + r.bottom) / 2
+	mouseClick(h, x, middle)
+	at := func(y int) bool { r := bounds(); v := (r.first + r.last) / 2; return v >= y-5 && v <= y+5 }
+	if err = wait("track clicked at pointer", func() bool { return at(middle) }); err != nil {
+		return err
+	}
+	call("mouse_event", 2, 0, 0, 0, 0)
+	for _, y := range []int{middle - 48, middle + 72, middle} {
+		mouseMove(h, x, y)
+		if err = wait("thumb follows mouse", func() bool { return at(y) }); err != nil {
+			call("mouse_event", 4, 0, 0, 0, 0)
+			return err
+		}
+	}
+	call("mouse_event", 4, 0, 0, 0, 0)
+	appendEvent := func(at int) error {
+		_, err := db.Exec("INSERT INTO events(meeting,kind,at,end,speaker,text) SELECT id,'speech',?,?, 'A', 'Live scroll verification' FROM meetings WHERE title=?", at, at+1, title)
+		if err == nil {
+			ctrl('L')
+			key(27)
+			time.Sleep(time.Second)
+		}
+		return err
+	}
+	r = bounds()
+	if err = appendEvent(970); err != nil {
+		return err
+	}
+	after := bounds()
+	if after.first < r.first-6 || after.first > r.first+6 {
+		return fmt.Errorf("new record moved reading viewport: %+v -> %+v", r, after)
+	}
+	mouseMove(h, x, (after.first+after.last)/2)
+	call("mouse_event", 2, 0, 0, 0, 0)
+	mouseMove(h, x, after.bottom+4)
+	call("mouse_event", 4, 0, 0, 0, 0)
+	if err = appendEvent(971); err != nil {
+		return err
+	}
+	r = bounds()
+	if r.bottom-r.top < 150 || r.last != r.bottom {
+		return fmt.Errorf("did not resume following new records: %+v", r)
+	}
+	fmt.Println("Verified default tail, track click, thumb drag, reading history and following new events")
 	return nil
 }
 
@@ -267,7 +374,7 @@ func run() error {
 	if *video != "" {
 		call("ShowWindow", h, 3)
 		time.Sleep(time.Second)
-		if err = dragBoard(h); err != nil {
+		if err = dragBoard(h, *app); err != nil {
 			return err
 		}
 		dpi := int(call("GetDpiForWindow", h))
@@ -331,7 +438,17 @@ func run() error {
 		fmt.Println("Player process audio and two window frames captured")
 	}
 	srt := filepath.Join(*out, "archive.srt")
-	if err = os.WriteFile(srt, []byte("1\n00:02:03,400 --> 00:02:05,900\nA：待确认的议题\n"), 0600); err != nil {
+	archive := "1\n00:02:03,400 --> 00:02:05,900\nA：待确认的议题\n"
+	if *video != "" {
+		var text strings.Builder
+		text.WriteString(archive)
+		for n := 0; n < 180; n++ {
+			at := 300 + n
+			fmt.Fprintf(&text, "\n%d\n00:%02d:%02d,000 --> 00:%02d:%02d,000\nA: %s\n", n+2, at/60, at%60, (at+1)/60, (at+1)%60, strings.Repeat(fmt.Sprintf("Record %d. ", n), n%19+1))
+		}
+		archive = text.String()
+	}
+	if err = os.WriteFile(srt, []byte(archive), 0600); err != nil {
 		return err
 	}
 	ctrl('I')
@@ -357,6 +474,11 @@ func run() error {
 	}
 	if !query(db, "SELECT count(*) FROM notes WHERE title='第五次会议跟进'") {
 		return errors.New("便签重启后丢失")
+	}
+	if *video != "" {
+		if err = scrollMeeting(h, *app, db, name); err != nil {
+			return err
+		}
 	}
 	call("PostMessageW", h, 0x10, 0, 0)
 	err = c.Wait()

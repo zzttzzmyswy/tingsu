@@ -13,7 +13,7 @@
 | Linux x86_64，glibc 2.35 及以上 | 下载后在文件属性中允许执行，或运行 `chmod +x Tingsu-Linux-x86_64.AppImage`。[下载 AppImage](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/Tingsu-Linux-x86_64.AppImage) |
 | Windows x64 | 双击后会自行展开运行组件，首次启动请稍候。[下载 Windows EXE](https://github.com/zzttzzmyswy/tingsu/releases/latest/download/Tingsu-Windows-x86_64.exe) |
 
-Linux 桌面需要 EGL、Wayland 或 X11 图形库。Wayland 共享窗口或屏幕时，由当前桌面的 ScreenCast 门户授权。Windows 使用系统 Direct3D 11 绘制界面。
+Linux 桌面需要 EGL、Wayland 或 X11 图形库。Wayland 共享窗口或屏幕时，由当前桌面的 ScreenCast 门户授权。Windows 使用系统 Direct3D 11 绘制界面。工作台读取当前桌面的字体、配色和选中色。切换系统主题后，重新聚焦听序即可刷新外观。
 
 Windows 如提示运行组件被隔离，可用发行版校验清单核实下载来源，并查看对应组件的指纹及厂商复核进展。[Windows 启动与安全软件提示](docs/windows-startup.md)
 
@@ -43,6 +43,8 @@ Linux 自动跟随当前桌面协议。可以用 `./Tingsu-Linux-x86_64.AppImage
 在 **设置 → 首选项 → 会话行为** 开启自动分析，下一场连接 AI 后就会收到往期未结问题和待办的开场提醒，无需先录音或提问。每场成功提醒一次，重连会延续该场的进度。明确告诉 AI「样机已签收，请把这项待办标为完成」，或在卡片上自己更新。状态包括 **待跟进、进行中、已完成**。已完成卡片可通过状态筛选找回，也可以重新打开。
 
 ## 浏览会议记录
+
+打开会议时，记录默认停在最新一条。停在底部时，新发言和正在生成的 AI 回复会自动跟随。向上阅读时，新的内容会保留你正在看的位置。将滚动条拖回底部即可恢复跟随。
 
 在记录里选择 **查找** 可按关键词、发言人或记录类型搜索整场会议。点击搜索结果可跳到对应发言。发言旁的 **引用** 将原话放进消息草稿，**建便签** 则会带入发言人和出处。看板支持按类型筛选，主题看板还可按状态筛选。可拖动分隔线调整栏宽，也可以从 **视图** 菜单收起会议列表或便签看板。
 

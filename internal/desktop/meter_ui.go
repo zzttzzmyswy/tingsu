@@ -30,12 +30,10 @@ func (u *workbench) meter(g C) D {
 		return (layout.Flex{Axis: layout.Vertical}).Layout(g, layout.Rigid(u.oneLine(label, 10, muted)), layout.Rigid(func(g C) D {
 			w, h := g.Dp(44), g.Dp(7)
 			for i := 0; i < 10; i++ {
-				c := rgb(0xc9d6d2)
+				c := line
 				if i < illuminated {
-					c = teal
-					if i >= 8 {
-						c = rgb(0xc77c24)
-					}
+					c = selection
+
 				}
 				paint.FillShape(g.Ops, c, clip.Rect(image.Rect(i*w/10, 0, (i+1)*w/10-1, h)).Op())
 			}

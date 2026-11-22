@@ -2,6 +2,8 @@
 
 Linux 和 Windows 使用同一套 Go/Gio 界面。工作台与会议服务在同一个进程中，通过队列传递状态和命令。Gio 窗口线程负责布局、渲染和输入。后端串行处理会议状态，并将采集、网络请求和 Agent 调度交给专门服务。系统文件对话框和屏幕授权由对应平台实现。[桌面桥接](../internal/desktop/) · [工作台](../internal/desktop/workspace_ui.go)
 
+Linux 的桌面外观通过 GTK 3 和 Settings 门户读取，Windows 从系统颜色、界面字体和 UISettings 获取。分隔条按窗口像素处理指针输入，拖动中复用已排版的记录和便签，短暂停顿或松开后按新宽度换行。会议记录按行记录实际高度，滚动条支持绝对定位。阅读历史时使用记录 ID 和行内偏移保持位置。[桌面外观](../internal/desktop/appearance.go) · [会议记录视图](../internal/desktop/feed_view.go)
+
 | 模块 | 职责 |
 | --- | --- |
 | desktop | 按顺序处理窗口事件，维护当前会议、连接和画面，向工作台发布一致的快照。后台工作通过事件队列回报结果。 |

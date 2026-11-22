@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"fmt"
-	"image/color"
 	"strconv"
 	"strings"
 
@@ -148,42 +147,12 @@ func (u *workbench) pane(g C, content W) D {
 }
 func (u *workbench) feed(g C) D {
 	return u.pane(g, func(g C) D {
-		var events []M
-		for _, e := range rows(u.state["events"]) {
-			if u.feedKind == "" || u.feedKind == str(e["kind"]) {
-				events = append(events, e)
-			}
-		}
 		return (layout.Flex{Axis: layout.Vertical}).Layout(g,
 			layout.Rigid(func(g C) D {
 				filter := []choice{{"", "全部记录"}, {"speech", "会议发言"}, {"assistant", "AI 回复"}, {"user", "我的消息"}}
-				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, col(3, u.text(str(u.meeting()["title"]), 22, ink, true), u.oneLine("会议记录", 13, muted))), layout.Rigid(fixedWidth(105, u.drop("feed/filter", labelOf(filter, u.feedKind), filter, u.feedKind, false, func(v string) { u.feedKind = v }))), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.button("find", "查找", false, u.openSearch)))
-
+				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, col(3, u.text(str(u.meeting()["title"]), 22, ink, true), u.oneLine("会议记录", 13, muted))), layout.Rigid(fixedWidth(105, u.drop("feed/filter", labelOf(filter, u.feedKind), filter, u.feedKind, false, func(v string) { u.feedKind = v; u.records = recordView{}; u.updateFeed() }))), layout.Rigid(layout.Spacer{Width: 6}.Layout), layout.Rigid(u.button("find", "查找", false, u.openSearch)))
 			}),
-			layout.Flexed(1, func(g C) D {
-				l := u.list("feed")
-				l.ScrollToEnd = l.Position.Length > g.Constraints.Max.Y
-				extra := 0
-				if truth(u.state["older"]) {
-					extra = 1
-				}
-				n := extra + len(events)
-				if u.stream != "" {
-					n++
-				}
-				if n == 0 {
-					return layout.Center.Layout(g, u.text("会议发言与 AI 回复将显示在这里", 14, muted, false))
-				}
-				return material.List(u.th, l).Layout(g, n, func(g C, i int) D {
-					if i < extra {
-						return u.button("older", "载入更早记录", false, func() { u.cmd("older", nil) })(g)
-					}
-					if i-extra >= len(events) {
-						return u.eventRow(g, M{"kind": "assistant", "speaker": "听序 AI", "text": u.stream, "seq": "stream"})
-					}
-					return u.eventRow(g, events[i-extra])
-				})
-			}),
+			layout.Flexed(1, u.recordList),
 			layout.Rigid(u.composer))
 	})
 }
@@ -207,7 +176,7 @@ func (u *workbench) eventRow(g C, e M) D {
 	if who == "" {
 		who = kindLabel(kind)
 	}
-	style := material.Label(u.th, 15, str(e["text"]))
+	style := material.Label(u.th, u.fontSize(15), str(e["text"]))
 	style.Color = ink
 	if u.selectable[id] == nil {
 		u.selectable[id] = new(widget.Selectable)
@@ -217,25 +186,19 @@ func (u *workbench) eventRow(g C, e M) D {
 	if known, ok := e["timed"]; ok && !truth(known) {
 		stamp = "未标时"
 	}
-	header := u.text(stamp+"   "+who, 13, teal, true)
+	header := u.text(stamp+"   "+who, 13, ink, true)
 	if kind == "speech" {
 		tag := stamp + "   " + who
 		quote := tag + "\n" + str(e["text"])
 		header = func(g C) D {
-			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, teal, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("form/body").SetText(quote) }))))
+			return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text(tag, 13, ink, true)), layout.Rigid(row(4, u.button("quote"+id, "引用", false, func() { u.appendDraft(quote) }), u.button("pin"+id, "建便签", false, func() { u.editNote(nil); u.edit("form/body").SetText(quote) }))))
 		}
 	}
 	content := []W{header, style.Layout}
 	if files := str(e["files"]); files != "" && files != "[]" {
 		content = append(content, u.text(files, 12, muted, false))
 	}
-	bg := paper
-	if kind == "assistant" {
-		bg = rgb(0xecf5ef)
-	} else if kind == "user" {
-		bg = rgb(0xf0f4f8)
-	}
-	return layout.Inset{Top: 3, Bottom: 3, Right: 7}.Layout(g, func(g C) D { return box(full(g), bg, 8, inset(9, col(3, content...))) })
+	return layout.Inset{Top: 3, Bottom: 3, Right: 7}.Layout(g, func(g C) D { return box(full(g), paper, 0, inset(9, col(3, content...))) })
 }
 func (u *workbench) appendDraft(quote string) {
 	ed := u.edit("message")
@@ -304,26 +267,22 @@ func (u *workbench) board(g C) D {
 				for btn.Clicked(g) {
 					u.editNote(n)
 				}
-				bg := map[string]color.NRGBA{"question": rgb(0xfff3d6), "task": rgb(0xe2f2e7), "idea": rgb(0xe8effa), "decision": rgb(0xf0eafb)}[kind]
-				if bg.A == 0 {
-					bg = mint
+				bg := paper
+				if btn.Hovered() || btn.Pressed() {
+					bg = hover
 				}
 				meta := labelOf(kinds, kind)
 				if status != "" {
 					meta += "   ·   " + labelOf(statuses, status)
 				}
-				content := []W{func(g C) D {
-					return layout.W.Layout(g, func(g C) D {
-						return box(g, paper, 4, padding{Left: 6, Right: 6, Top: 2, Bottom: 2}.Wrap(u.text(meta, 12, dark, true)))
-					})
-				}, u.text(str(n["title"]), 17, ink, true)}
+				content := []W{u.oneLine(meta, 12, muted), u.text(str(n["title"]), 17, ink, true)}
 				if s := str(n["body"]); s != "" {
 					content = append(content, u.text(s, 14, ink, false))
 				}
 				if s := str(n["source_title"]); s != "" {
 					content = append(content, u.text("来自 "+s, 12, muted, false))
 				}
-				return btn.Layout(g, func(g C) D { return relief(full(g), bg, 7, btn.Pressed(), inset(12, col(5, content...))) })
+				return btn.Layout(g, func(g C) D { return control(full(g), bg, inset(12, col(5, content...))) })
 			})
 		}
 		if len(cards) == 0 {
@@ -333,19 +292,17 @@ func (u *workbench) board(g C) D {
 			layout.Rigid(func(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.text("便签看板", 19, ink, true)), layout.Rigid(u.button("add-note", "＋ 新建", true, func() { u.editNote(nil) })))
 			}),
-			layout.Rigid(func(g C) D { return (layout.Inset{Top: 8, Bottom: 8}).Layout(g, row(4, tab...)) }), layout.Rigid(padding{Bottom: 8}.Wrap(row(6, kindFilter, filterStatus))), layout.Flexed(1, func(g C) D { return u.scroll(g, "board", cards) }))
+			layout.Rigid(func(g C) D { return (layout.Inset{Top: 8, Bottom: 8}).Layout(g, row(4, tab...)) }), layout.Rigid(padding{Bottom: 8}.Wrap(row(6, kindFilter, filterStatus))), layout.Flexed(1, func(g C) D { return u.textPane(g, &u.boardText, func(g C) D { return u.scroll(g, "board", cards) }) }))
 	})
 }
 func (u *workbench) jump(at float64) {
 	u.open("")
 	u.feedKind = ""
-	es := rows(u.state["events"])
-	for i, e := range es {
-		if number(e["at"]) >= at {
-			if truth(u.state["older"]) {
-				i++
-			}
-			u.list("feed").ScrollTo(i)
+	u.updateFeed()
+	for i, e := range u.records.rows {
+		if e != nil && number(e["at"]) >= at {
+			u.records.bar = thumbDrag{}
+			u.records.list.ScrollTo(i)
 			return
 		}
 	}

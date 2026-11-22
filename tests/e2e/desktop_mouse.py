@@ -1,6 +1,7 @@
 """Run the release application's mouse regression on a dedicated 1440x950 X display."""
 
 import argparse
+import json
 from io import BytesIO
 import os
 from pathlib import Path
@@ -44,19 +45,25 @@ def run(app, work):
                 x("mousemove", "--window", win, px, py, "click", 1)
                 time.sleep(0.18)
 
+            palette = json.loads(
+                subprocess.check_output([app, "--read-system-appearance"], env=env)
+            )
+            border = tuple(palette["Border"][c] for c in "RGB")
+
             def board_divider():
                 buf = subprocess.check_output(
                     ["import", "-window", win, "png:-"], env=env, timeout=12
                 )
                 pixels = Image.open(BytesIO(buf)).convert("RGB")
-                color = (230, 236, 236)
+                color = border
                 matches = [
                     px
                     for px in range(350, 1200)
                     if pixels.getpixel((px, 148)) == pixels.getpixel((px, 570)) == color
                 ]
                 assert matches, "Board divider missing"
-                return sum(matches) // len(matches)
+                assert max(matches) - min(matches) <= 2, matches
+                return matches[0]
 
             start = board_divider()
             x("mousemove", "--window", win, start, 380, "mousedown", 1)

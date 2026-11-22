@@ -11,7 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
+
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -51,7 +51,7 @@ func glyph(g C, icon *widget.Icon, size unit.Dp, c color.NRGBA) D {
 }
 func (u *workbench) oneLine(s string, size unit.Sp, c color.NRGBA) W {
 	return func(g C) D {
-		l := material.Label(u.th, size, s)
+		l := material.Label(u.th, u.fontSize(size), s)
 		l.MaxLines = 1
 		l.Color = c
 		return l.Layout(g)
@@ -96,13 +96,13 @@ func (u *workbench) anchor(g C, id, caption string, items []menuItem, selected s
 	}
 	bg := paper
 	if btn.Hovered() || g.Focused(btn) || u.popup.id == id {
-		bg = mint
+		bg = hover
 	}
 	d := btn.Layout(g, func(g C) D {
 		if menubar {
 			return box(g, bg, 3, padding{Top: 5, Bottom: 5, Left: 9, Right: 9}.Wrap(u.oneLine(caption, 14, ink)))
 		}
-		return relief(full(g), bg, 4, btn.Pressed(), func(g C) D {
+		return control(full(g), bg, func(g C) D {
 			return inset(1, padding{Top: 6, Bottom: 6, Left: 9, Right: 7}.Wrap(func(g C) D {
 				return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Flexed(1, u.oneLine(caption, 14, ink)), layout.Rigid(func(g C) D { return glyph(g, chevron, 16, muted) }))
 			}))(g)
@@ -139,7 +139,6 @@ func (u *workbench) anchor(g C, id, caption string, items []menuItem, selected s
 		dy = -dims.Size.Y - g.Dp(2)
 	}
 	t := op.Offset(image.Pt(dx, dy)).Push(g.Ops)
-	paint.FillShape(g.Ops, rgb(0xbec8c6), clip.UniformRRect(image.Rect(1, 2, dims.Size.X+2, dims.Size.Y+3), g.Dp(4)).Op(g.Ops))
 	call.Add(g.Ops)
 	t.Pop()
 	op.Defer(g.Ops, m.Stop())
@@ -199,7 +198,7 @@ func (u *workbench) popupBody(g C, items []menuItem, selected string, search boo
 		}
 		u.list("popup").ScrollTo(u.popup.index)
 	}
-	return widget.Border{Color: line, Width: 1, CornerRadius: 4}.Layout(g, func(g C) D {
+	return widget.Border{Color: line, Width: 1, CornerRadius: 0}.Layout(g, func(g C) D {
 		return box(g, paper, 4, inset(4, func(g C) D {
 			parts := []layout.FlexChild{}
 			if search {
@@ -220,20 +219,20 @@ func (u *workbench) popupBody(g C, items []menuItem, selected string, search boo
 							return btn.Layout(g, func(g C) D {
 								bg := paper
 								if btn.Hovered() || i == u.popup.index {
-									bg = mint
+									bg = hover
 								}
 								check := ""
 								if o.id == selected {
 									check = "✓"
 								}
 								return box(full(g), bg, 3, padding{Top: 7, Bottom: 7, Left: 6, Right: 8}.Wrap(func(g C) D {
-									return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(fixedWidth(17, u.oneLine(check, 13, teal))), layout.Flexed(1, u.oneLine(o.label, 14, ink)), layout.Rigid(u.oneLine(o.hint, 12, muted)))
+									return (layout.Flex{Alignment: layout.Middle}).Layout(g, layout.Rigid(fixedWidth(17, u.oneLine(check, 13, selection))), layout.Flexed(1, u.oneLine(o.label, 14, ink)), layout.Rigid(u.oneLine(o.hint, 12, muted)))
 								}))
 							})
 						}
 						group := sourceGroup(o.id)
 						if group != "" && (i == 0 || sourceGroup(visible[i-1].id) != group) {
-							return col(2, func(g C) D { return box(full(g), rgb(0xdce9e5), 3, inset(6, u.text(group, 12, dark, true))) }, rowWidget)(g)
+							return col(2, func(g C) D { return box(full(g), canvas, 3, inset(6, u.text(group, 12, ink, true))) }, rowWidget)(g)
 						}
 						return rowWidget(g)
 					})

@@ -268,7 +268,7 @@ func (u *workbench) sessionControls() []W {
 			u.cmd("session", M{"id": selected})
 		}), u.button("disconnect", "断开", false, func() { u.cmd("disconnect", nil); u.openAgent() }))
 	case "ready":
-		ws := []W{u.text(labelOf(services, str(u.state["agentName"]))+" 已连接", 16, teal, true), u.text(str(u.state["session"]), 13, muted, false)}
+		ws := []W{u.text(labelOf(services, str(u.state["agentName"]))+" 已连接", 16, selection, true), u.text(str(u.state["session"]), 13, muted, false)}
 		if str(u.state["agentWorkspace"]) != "" {
 			ws = append(ws, u.button("session-dir", "打开工作目录", false, func() { u.cmd("open_agent_workspace", nil) }))
 		}

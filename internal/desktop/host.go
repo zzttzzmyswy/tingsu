@@ -94,7 +94,7 @@ func Run(args []string) error {
 		case "--read-system-appearance":
 			return json.NewEncoder(os.Stdout).Encode(probeAppearance())
 		case "--version":
-			fmt.Println("Tingsu 2.4.0")
+			fmt.Println("Tingsu 2.4.1")
 			return nil
 		default:
 			return fmt.Errorf("unknown argument %s", a)

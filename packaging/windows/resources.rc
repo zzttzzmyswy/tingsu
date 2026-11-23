@@ -12,9 +12,9 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "Tingsu contributors"
    VALUE "FileDescription", "Tingsu Meeting Workspace"
-   VALUE "FileVersion", "2.4.0"
+   VALUE "FileVersion", "2.4.1"
    VALUE "ProductName", "Tingsu"
-   VALUE "ProductVersion", "2.4.0"
+   VALUE "ProductVersion", "2.4.1"
   END
  END
  BLOCK "VarFileInfo"

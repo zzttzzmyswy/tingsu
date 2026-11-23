@@ -178,8 +178,11 @@ int main(int argc, char **argv) {
     GstElement *src = gst_bin_get_by_name(GST_BIN(pipe), "desktop");
     g_object_set(src, "fd", fd, NULL);
     GObjectClass *klass = G_OBJECT_GET_CLASS(src);
+    // KWin offers 2-4 buffers for a window stream. A higher floor leaves the two
+    // ranges disjoint, so spa_pod_filter rejects them before the first frame
+    // ("error alloc buffers: Invalid argument").
     if (g_object_class_find_property(klass, "min-buffers"))
-        g_object_set(src, "min-buffers", 5, NULL);
+        g_object_set(src, "min-buffers", 2, NULL);
     if (g_object_class_find_property(klass, "always-copy"))
         g_object_set(src, "always-copy", TRUE, NULL);
     if (serial && g_object_class_find_property(klass, "target-object")) {
